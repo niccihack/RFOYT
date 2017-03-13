@@ -12,28 +12,26 @@ RFOYTgrowth <- read_csv("~/RFOYT/RFOYT/RFOYTgrowth.csv")
 growth<-as.data.frame(RFOYTgrowth)
 
 
-#calculate condition factor
-dat3<-data.frame()
-for (d in (1:length(b))){
-  m = dplyr::filter(b, mass.sl == 'mass')$value
-  l = dplyr::filter(b, mass.sl == 'SL')$value
-  cf = (m/(l^3))*100 #condition factor formula
-  dat3 = rbind(dat3, data.frame(b$PITtag, b$day, cf))#combine all into dataframe
-}
-
-
 #reorganize data into long form
 library(tidyr)
 b = tidyr::gather(growth, 'data.type','value', 5:16)
 b$mass.sl = gsub(".*\\-",'',b$data.type)#make separate data type column - mass or SL
 b$day = as.integer(substr( gsub("\\-.*","",b$data.type), 4,5))#make separate day column
 
+#calculate condition factor
+dat.cf<-data.frame()
+for (d in (1:length(b))){
+  m = dplyr::filter(b, mass.sl == 'mass')$value
+  l = dplyr::filter(b, mass.sl == 'SL')$value
+  cf = (m/(l^3))*100 #condition factor formula
+  dat.cf = rbind(dat.cf, data.frame(b$PITtag, b$day, cf))#combine all into dataframe
+}
 # generate all unique combinations of days 
 c = combn(unique(b$day), 2)
 
 
 #Calculate somatic growth rates for mass
-dat = data.frame()#make empty dataframe for loop
+dat.mass = data.frame()#make empty dataframe for loop
 for (d in (1: ncol(c))){
   e = c[,d]
   #pull out the mass for those two days: 
@@ -41,12 +39,12 @@ for (d in (1: ncol(c))){
   g = dplyr::filter(b, day == min(e) & mass.sl == 'mass')$value
   sgr.mass = log ( (f-g)/(max(e)-min(e))*100 )#somatic growth rate formula
   Comb = paste('Day',e[1], e[2], sep = '-')#make title
-  dat = rbind(dat, data.frame(b$PITtag, b$treatment, b$IGF1, sgr.mass, Comb))#combine all into dataframe
+  dat.mass = rbind(dat.mass, data.frame(b$PITtag, b$treatment, b$IGF1, sgr.mass, Comb))#combine all into dataframe
 }
 
 
 #calculate SGR for SL
-dat2 = data.frame()#make empty dataframe for loop
+dat.sl = data.frame()#make empty dataframe for loop
 for (d in (1: ncol(c))){
   e = c[,d]
   #pull out the sl for those two days: 
@@ -54,12 +52,35 @@ for (d in (1: ncol(c))){
   g = dplyr::filter(b, day == min(e) & mass.sl == 'SL')$value
   sgr.SL = log ( (f-g)/(max(e)-min(e))*100 )#somatic growth rate formula
   Comb = paste('Day',e[1], e[2], sep = '-')#make title
-  dat2 = rbind(dat2, data.frame(b$PITtag, b$treatment, b$IGF1, sgr.SL, Comb))#combine all into dataframe
+  dat.sl = rbind(dat.sl, data.frame(b$PITtag, b$treatment, b$IGF1, sgr.SL, Comb))#combine all into dataframe
 }
 
  
 
 #####Pairwise ANOVAs#####
+
+##mass
+mass<-subset(b, mass.sl=='mass')#subset mass
+library(ggplot2)
+mass.plot=ggplot(mass, aes(treatment,value,colour=treatment))+ geom_boxplot()#look at data
+#check analysis of variance
+myaov<-function(h){
+  aov.mass<-aov(lm(value~treatment,data=mass,day==h,na.action=na.omit))
+}
+#apply to each day
+aov.stats <- sapply(unique(mass$day), myaov, simplify=FALSE)
+#check normality and residuals if necessary
+#plot(aov.mass[])
+#then run anova
+myanova<-function(i){
+  anova.mass<-anova((lm(value~treatment,data=mass,day==i,na.action=na.omit)))
+}
+anova.stats<- sapply(unique(mass$day), myanova, simplify=FALSE)
+names(anova.stats)<-paste('Day -',unique(mass$day))#rename outputs to include days
+capture.output(anova.stats,file='anova.stats.csv')#export file
+
+#SL
+
 
 
 #####Pearson's correlations#####

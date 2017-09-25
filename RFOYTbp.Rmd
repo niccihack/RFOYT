@@ -1,0 +1,450 @@
+---
+title: "RFOYTbp"
+author: "Nicole Hack"
+date: "August 1, 2017"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup,include=F}
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+```{r, echo=F, include=F}
+packages <- c('readxl','tidyverse','readr','data.table','dplyr','car','ggplot2')
+lapply(packages, require, character.only = T)
+```
+
+```{r, echo=FALSE, include=F}
+#Load data sheets.
+mrpl17<-read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-rpl17 -  Quantification Cq Results_0.csv")
+mrpl17 <- mrpl17[mrpl17$Sample != 63,]#remove row 63 the only yellowtail 
+
+mrb <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-rB -  Quantification Cq Results_0.csv")
+mrb <- mrb[mrb$Sample != 63,]
+
+mra <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-rA -  Quantification Cq Results_0.csv")
+mra <- mra[mra$Sample != 63,]
+
+migf2 <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-IGF2 -  Quantification Cq Results_0.csv")
+migf2 <- migf2[migf2$Sample != 63,]
+
+migf1 <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-IGF1 -  Quantification Cq Results_0.csv")
+migf1 <- migf1[migf1$Sample != 63,]
+
+mef1a <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-ef1a -  Quantification Cq Results_0.csv")
+mef1a <- mef1a[mef1a$Sample != 63,]
+
+mbp5b <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-BP5b -  Quantification Cq Results_0.csv")
+mbp5b <- mbp5b[mbp5b$Sample != 63,]
+
+mbp5a <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-BP5a -  Quantification Cq Results_0.csv")
+mbp5a <- mbp5a[mbp5a$Sample != 63,]
+
+mbp2b <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-BP2b -  Quantification Cq Results_0.csv")
+mbp2b <- mbp2b[mbp2b$Sample != 63,]
+
+mbp2a <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-BP2a -  Quantification Cq Results_0.csv")
+mbp2a <- mbp2a[mbp2a$Sample != 63,]
+
+```
+
+```{r, echo=F}
+#Merge all data to get concentration by sample #
+mbp2a$gene ='mbp2a'
+mbp2b$gene = 'mbp2b'
+mbp5a$gene = 'mbp5a'
+mbp5b$gene = 'mbp5b'
+mef1a$gene = 'mef1a'
+migf1$gene = 'migf1'
+migf2$gene = 'migf2'
+mra$gene = 'mra'
+mrb$gene = 'mrb'
+mrpl17$gene = 'mrpl17'
+
+dat_test = rbind(mbp2a, mbp2b,
+                 mbp5a, mbp5b,
+                 mef1a, 
+                 migf1, migf2,
+                 mra, mrb, mrpl17) %>%
+  select(Sample, Cq, gene) 
+
+#Remove NAs
+dat_test = filter(dat_test,!is.na(Sample))
+
+
+dat_test2 = dat_test %>%
+  group_by(gene, Sample) %>%
+  summarize(n = length(Cq), Cq = mean(Cq))
+
+
+```
+
+#Muscle data
+
+```{r add treatment data, echo=F}
+RFOYTgrowth <- read.csv("~/RFOYT/RFOYT/RFOYTgrowth.csv")
+#make new dataframe to play with
+growth<-as.data.frame(RFOYTgrowth)
+
+#reorganize data into long form
+b = tidyr::gather(growth, 'data.type','value', 5:16) %>%
+  select(PITtag, treatment)
+colnames(b) = c('Sample', 'treatment')
+b = unique(b)
+
+dat_test3 = dplyr::left_join(dat_test2, b, by = 'Sample')
+dat_test3 = filter(dat_test3, !is.na(Cq))
+
+dat_test3$housekeeping = FALSE
+dat_test3$housekeeping[dat_test3$gene == 'mef1a' | 
+                         dat_test3$gene == 'mrpl17'] = TRUE
+```
+
+##Finding outliers
+
+```{r Find outliers, echo=F}
+#Look at housekeeper genes to make sure not too low or high
+hk_Cq = dat_test3 %>% 
+  filter(housekeeping == T) %>% 
+  group_by(gene) %>% arrange(gene, Cq) 
+refouts = rbind(top_n(hk_Cq,4,Cq), top_n(hk_Cq,-4,Cq)) %>% arrange(gene, Cq)
+```
+
+Top and bottom 4 values for both reference genes to determine accuracy.
+```{r, echo= F, results='asis'}
+knitr::kable(refouts, caption = "Reference genes")
+
+```
+
+Perhaps samples **113, 73, 54, & 44** should be removed?
+
+```{r, echo=F}
+#find geometric mean of housekeepers and normalized Cq 
+adj_Cq = plyr::ddply(dat_test3, 'Sample', function(x){
+  target_genes = x[!x$housekeeping,]
+  housekeeping_genes = x[x$housekeeping,]
+  
+  target_genes$mean_housekeeping = prod(housekeeping_genes$Cq)^(1/length(housekeeping_genes$Cq))#geometric mean
+  
+  target_genes$Cq_normalized = target_genes$Cq/target_genes$mean_housekeeping#normalize all genes to their geometric mean
+  return(target_genes)
+})
+
+
+#Find outliers
+out_Cq = adj_Cq %>% group_by(gene) %>%
+  filter(Cq_normalized < 3*sd(Cq_normalized)+mean(Cq_normalized) & Cq_normalized > mean(Cq_normalized)-(3*sd(Cq_normalized)))
+
+mremoved = adj_Cq %>% group_by(gene) %>%
+  filter(Cq_normalized > 3*sd(Cq_normalized)+mean(Cq_normalized) | Cq_normalized < mean(Cq_normalized)-(3*sd(Cq_normalized)))
+```
+
+Samples **#54  and 73** were removed due to over/under 3 std
+```{r, echo=F}
+
+knitr::kable(mremoved, caption = 'Samples removed from statistics')
+
+out = out_Cq %>% group_by(gene,treatment) %>% summarize(max = max(Cq_normalized),min = min(Cq_normalized), max_sample = Sample[which(Cq_normalized == max)], min_sample = Sample[which(Cq_normalized == min)]) %>% arrange(min_sample)
+```
+
+
+```{r, echo=F}
+
+knitr::kable(out,caption = 'Possible outliers of whole dataset')
+```
+
+
+Possibly remove **#113, 38, & 44**.
+
+
+Graph of data with only **#73 and 54** removed.
+```{r Muscle graphs, echo=F}
+#Find mean for graphing
+Cq = out_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
+
+ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
+  geom_boxplot()
+#then run anova
+myanova<-function(i){
+  anova.genes<-anova((lm(Cq~treatment,data=out_Cq,gene==i,na.action=na.omit)))
+}
+anova.stats.m<- sapply(unique(out_Cq$gene), myanova, simplify=FALSE)
+names(anova.stats.m)<-paste(unique(out_Cq$gene))#rename outputs to include days
+capture.output(anova.stats.m, file = 'Muscle-gene-anova.txt')
+```
+
+##Statistics
+
+```{r Manuscript graphs, echo=F}
+knitr::kable(anova.stats.m[[1]], caption = 'BP2a')
+knitr::kable(anova.stats.m[[2]], caption = 'BP2b')
+knitr::kable(anova.stats.m[[3]], caption = 'BP5a')
+knitr::kable(anova.stats.m[[4]], caption = 'BP5b')
+knitr::kable(anova.stats.m[[5]], caption = 'IGF1')
+knitr::kable(anova.stats.m[[6]], caption = 'IGF2')
+knitr::kable(anova.stats.m[[7]], caption = 'Recepter A')
+knitr::kable(anova.stats.m[[8]], caption = 'Recepter B')
+```
+
+Only Recepter A significant.
+
+Now removing recommended **#113, 44, & 38**.
+```{r, echo=F}
+out_Cq = out_Cq %>% filter(Sample!=113 & Sample!=38 & Sample!=44)
+```
+
+Rerun graphs and stats.
+
+```{r, echo=F}
+
+#Find mean for graphing
+Cq = out_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
+
+ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
+  geom_boxplot()
+#then run anova
+myanova<-function(i){
+  anova.genes<-anova((lm(Cq~treatment,data=out_Cq,gene==i,na.action=na.omit)))
+}
+anova.stats.m<- sapply(unique(out_Cq$gene), myanova, simplify=FALSE)
+names(anova.stats.m)<-paste(unique(out_Cq$gene))#rename outputs to include days
+
+knitr::kable(anova.stats.m[[1]], caption = 'BP2a')
+knitr::kable(anova.stats.m[[2]], caption = 'BP2b')
+knitr::kable(anova.stats.m[[3]], caption = 'BP5a')
+knitr::kable(anova.stats.m[[4]], caption = 'BP5b')
+knitr::kable(anova.stats.m[[5]], caption = 'IGF1')
+knitr::kable(anova.stats.m[[6]], caption = 'IGF2')
+knitr::kable(anova.stats.m[[7]], caption = 'Recepter A')
+knitr::kable(anova.stats.m[[8]], caption = 'Recepter B')
+```
+
+Recepter A more significant, no others significant.
+
+##Muscle Graphs
+
+```{r, echo=F}
+
+#Convert mean to percent -> Set low mean per gene to 100%
+#Find overall low mean and sem
+low_mean = out_Cq %>% filter(treatment =='l')%>% group_by(gene)  %>% summarize(low_mean = mean(Cq_normalized))
+cop = copy(low_mean)
+low_mean = bind_rows(low_mean,cop) %>% arrange(gene) %>% as.list()
+Cq$low_mean = low_mean[[2]]#add to means table
+Cq = as.data.frame(Cq) %>% mutate(new_mean = mean_Cq/low_mean)#Calculate percent by dividing by low mean
+Cq = as.data.frame(Cq) %>% mutate(new_sem = sem_Cq/low_mean)#Calculate percent by dividing by  low sem
+
+ggplot(Cq, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  theme_classic(base_size = 18)
+```
+
+Separated graphs
+
+```{r Separated muscle graphs, echo = F}
+#separate for easier viewing
+igfs = Cq %>% filter(gene == 'migf1' | gene == 'migf2')
+ggplot(igfs, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  ylab('Relative mRNA level')+
+  xlab('Gene')+
+  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
+  scale_x_discrete(labels = c("IGF1","IGF2"))+
+  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  theme_classic(base_size = 18)+
+  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'migfs-bw.jpeg', width = 5, height = 5)
+
+bps = Cq %>% filter(gene != 'migf1' & gene != 'migf2' & gene != 'mra' & gene != 'mrb')
+ggplot(bps, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  ylab('Relative mRNA level')+
+  xlab('Gene')+
+  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
+  scale_x_discrete(labels = c("BP2a","BP2b",'BP5a','BP5b','Ra','Rb'))+
+  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  theme_classic(base_size = 18)+
+  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'mbps-bw.jpeg', width = 7, height = 5)
+
+receps = Cq %>% filter(gene == 'mra' | gene == 'mrb')
+receps$sig = ''
+receps$sig[receps$gene =='mra' & receps$treatment == 'l']='*'
+ggplot(receps, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  ylab('Relative mRNA level')+
+  xlab('Gene')+
+  geom_text(aes(label = sig), nudge_x=.225, nudge_y = .1, size = 8)+
+  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
+  scale_x_discrete(labels = c('rA','rB'))+
+  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  theme_classic(base_size = 18)+
+  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'mreceps-bw.jpeg', width = 7, height = 5)
+
+```
+
+But these numbers seem remarkably similar to be significantly different...?
+```{r, echo=F}
+knitr::kable(receps)
+```
+
+
+#Liver data
+
+```{r, include =F}
+OLV_liver_mRNA <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/OLV_liver_mRNA.csv")
+
+liver <- OLV_liver_mRNA %>% select(PITtag,treatment,EF1a,rpl7,IGF1,IGF2,BP1a,BP1b,BP2a,BP2b,BP5a,BP5b)
+liver<-liver %>% filter(PITtag != 63 & !is.na(EF1a))#remove #63 (yellowtail) and any with no geometric mean
+
+#switch to long form
+lrna=tidyr::gather(liver,'gene','Cq',3:12)
+
+lrna['housekeeping'] = FALSE
+lrna$housekeeping[lrna$gene == 'EF1a' | 
+                         lrna$gene == 'rpl7'] = TRUE
+
+lrna = filter(lrna, !is.na(Cq))
+
+adj_livr = plyr::ddply(lrna, 'PITtag', function(x){
+  target_genes = x[!x$housekeeping,]
+  housekeeping_genes = x[x$housekeeping,]
+  
+  target_genes$mean_housekeeping = prod(housekeeping_genes$Cq)^(1/length(housekeeping_genes$Cq))
+  
+  target_genes$Cq_normalized = target_genes$Cq/target_genes$mean_housekeeping
+  return(target_genes)
+})
+
+#Look at housekeeper genes to make sure not too low or high
+hk_liv = lrna %>% 
+  filter(housekeeping == T) %>% 
+  group_by(gene) %>% arrange(gene, Cq) 
+refouts.l = rbind(top_n(hk_liv,6,Cq), top_n(hk_liv,-6,Cq)) %>% arrange(gene, Cq)
+
+```
+
+All liver data
+
+```{r, echo=F}
+ggplot(adj_livr,aes(x = gene, y = Cq,color=treatment))+
+  geom_boxplot()
+
+knitr::kable(refouts.l, caption = 'Reference genes')
+```
+
+##Find outliers
+
+```{r, echo=F}
+#Find outliers
+out_livr = adj_livr %>% group_by(gene) %>%
+  filter(Cq_normalized < 3*sd(Cq_normalized)+mean(Cq_normalized) & Cq_normalized > mean(Cq_normalized)-(3*sd(Cq_normalized)))
+
+removed = adj_livr %>% group_by(gene) %>%
+  filter(Cq_normalized > 3*sd(Cq_normalized)+mean(Cq_normalized) | Cq_normalized < mean(Cq_normalized)-(3*sd(Cq_normalized)))
+
+knitr::kable(removed, caption = 'Samples removed from std dev')
+
+out = out_livr %>% group_by(gene,treatment) %>% summarize(max = max(Cq_normalized),min = min(Cq_normalized), max_sample = PITtag[which(Cq_normalized == max)], min_sample = PITtag[which(Cq_normalized == min)]) %>% arrange(max_sample)
+
+knitr::kable(out, caption = 'Possible outliers')
+```
+
+Removing **#29, 50, 116, & 923** as discussed.
+
+##Statistics
+
+```{r, echo=F}
+out_livr = out_livr %>% filter(PITtag!=29 & PITtag!=50 & PITtag!=116 & PITtag != 923)
+
+#Find mean for graphing
+Cq_liv = out_livr %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
+
+#then run anova
+myanova<-function(i){
+  anova.genes<-anova((lm(Cq~treatment,data=out_livr,gene==i,na.action=na.omit)))
+}
+anova.stats.l<- sapply(unique(out_livr$gene), myanova, simplify=FALSE)
+names(anova.stats.l)<-paste(unique(out_livr$gene))#rename outputs to include days
+
+knitr::kable(anova.stats.l[[1]], caption = 'IGF1')
+knitr::kable(anova.stats.l[[2]], caption = 'IGF2')
+knitr::kable(anova.stats.l[[3]], caption = 'BP1a')
+knitr::kable(anova.stats.l[[4]], caption = 'BP1b')
+knitr::kable(anova.stats.l[[5]], caption = 'BP2a')
+knitr::kable(anova.stats.l[[6]], caption = 'BP2b')
+knitr::kable(anova.stats.l[[7]], caption = 'BP5a')
+knitr::kable(anova.stats.l[[8]], caption = 'BP5b')
+
+#Convert mean to percent -> Set total low mean to 100%
+#Find overall low mean and sem
+low_mean = out_livr %>% filter(treatment =='l')  %>% group_by(gene)%>% summarize(low_mean = mean(Cq_normalized))
+copliv = copy(low_mean) 
+low_mean = bind_rows(low_mean,copliv) %>% arrange(gene) %>% as.list()
+Cq_liv$low_mean = low_mean[[2]]#add to means table
+Cq_liv = as.data.frame(Cq_liv) %>% mutate(new_mean = mean_Cq/low_mean)#Calculate percent by dividing by overall low mean
+Cq_liv = as.data.frame(Cq_liv) %>% mutate(new_sem = sem_Cq/low_mean)#Calculate percent by dividing by overall low sem
+
+ggplot(Cq_liv, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  theme_classic(base_size = 18)
+```
+
+##Liver Graphs
+
+```{r,echo=F}
+#separate for easier viewing
+igfs.l = Cq_liv %>% filter(gene == 'IGF1' | gene == 'IGF2')
+ggplot(igfs.l, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  ylab('Relative mRNA level')+
+  xlab('Gene')+
+  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
+  scale_x_discrete(labels = c("IGF1","IGF2"))+
+  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  theme_classic(base_size = 18)+
+  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Ligfs-color.jpeg', width = 5, height = 5)
+
+bps.liv = Cq_liv %>% filter(gene != 'IGF1' & gene != 'IGF2')
+bps.liv = add_column(bps.liv, sig = '*')
+bps.liv$sig[bps.liv$gene =='BP5a' | bps.liv$gene == 'BP5b']=''
+bps.liv$sig[bps.liv$treatment != 'l']=''
+ggplot(bps.liv, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  ylab('Relative mRNA level')+
+  xlab('Gene')+
+  scale_y_continuous(expand = c(0,0),limits = c(0,2))+
+  scale_x_discrete(labels = c("BP1a","BP1b",'BP2a','BP2b','BP5a','BP5b'))+
+  geom_text(aes(label = sig),size = 8, nudge_y = 0.5)+
+  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  theme_classic(base_size = 18)+
+  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'lbps-color.jpeg', width = 7, height = 5)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

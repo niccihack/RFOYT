@@ -1,0 +1,943 @@
+---
+title: "RFOYT Statistics"
+author: "Nicole Hack"
+date: "August 2, 2017"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+
+#Rockfish olive/yellowtail growth experiment  
+##Statistics and graphs  
+***
+
+###__Data__
+
+The following growth data from July 11, 2016 - October 21, 2016 is used to create graphs and derive statistics.
+
+```{r, include = F, echo=FALSE}
+
+#Load data
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(car)
+library(ggplot2)
+library(ggsignif)
+library(lmerTest)
+library(knitr)
+
+RFOYTgrowth <- read.csv("~/RFOYT/RFOYT/RFOYTgrowth.csv")
+#make new dataframe to play with
+growth<-as.data.frame(RFOYTgrowth)
+
+#reorganize data into long form
+b = tidyr::gather(growth, 'data.type','value', 5:16)
+b$mass.sl = gsub(".*\\.",'',b$data.type)#make separate data type column - mass or SL
+b$day = as.integer(substr( gsub("\\-.*","",b$data.type), 4,5))#make separate day column
+b = b[b$PITtag != 63,]#remove row 63 the only yellowtail 
+b.mass <- dplyr::filter(b, mass.sl == 'mass')
+b.length <- dplyr::filter(b, mass.sl == 'SL')
+# generate all unique combinations of days 
+comb = combn(unique(b$day), 2)
+
+table = dplyr::group_by(b,treatment,mass.sl) %>% summarise(Mean = mean(value), n = length(unique(PITtag)))
+```
+
+```{r, echo = F, results='asis'}
+
+kable(table, caption = "Olive RF growth summary")
+```
+
+***
+###__IGF-1__
+
+First we see if IGF-1 concentrations differ between treatments.
+
+```{r}
+#IGF
+igf1.num = dplyr::filter(b.mass, day == 0)
+igfanova = anova(lm(IGF1~treatment, data = igf1.num, na.action=na.omit))
+knitr::kable(igfanova, caption = 'Plasma IGF-1 ANOVA')
+igf1 = dplyr::filter(b, !is.na(b$IGF1) & mass.sl == 'mass' & day == '0') %>% group_by(treatment) %>% summarize(average_igf = mean(IGF1), sem_igf =  sd(IGF1)/sqrt(length(IGF1)),n=length(IGF1))
+igf1$text = c('*','')
+ggplot(igf1, aes(x = treatment, y = average_igf))+
+  ylab('Plasma IGF1 (ng / ml)')+
+  xlab('Treatment')+
+  geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
+  scale_fill_grey(start = 0.5, end = 0.9)+
+  scale_y_continuous(expand = c(0,0),limits = c(0,25))+
+  scale_x_discrete(labels = c("High","Low"))+
+  geom_errorbar(aes(ymin=average_igf - sem_igf, ymax=average_igf + sem_igf), width = 0.25)+
+  theme_classic(base_size = 18)+
+  geom_text(aes(label = text),nudge_y=2, size = 8)+
+  theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12))
+ggsave(filename = 'Figure3.tiff', width = 5, height = 5)
+```
+```{r, include=F}
+#For presentations
+ggplot(igf1, aes(x = treatment, y = average_igf, fill = treatment))+
+  ylab('Plasma IGF1 (ng / ml)')+
+  xlab('Treatment')+
+  geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
+  scale_fill_manual(values = c("#1f375c","#42b5b8"))+
+  scale_y_continuous(expand = c(0,0),limits = c(0,25))+
+  scale_x_discrete(labels = c("High","Low"))+
+  geom_errorbar(aes(ymin=average_igf - sem_igf, ymax=average_igf + sem_igf), width = 0.5)+
+  theme_classic(base_size = 22)+
+  geom_text(aes(label = text),nudge_y=2, size = 8)+
+  theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 20), axis.text.y = element_text(size = 20), plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'igf1-color.jpeg', width = 5, height = 5)
+```
+
+The high treatment had significantly higher IGF-1 concentrations than the low treatment.
+
+###__Mass__
+
+Fish in the high food treatment had larger mass on average compared to the low feed treatment.
+
+```{r, echo=F}
+knitr::kable(anova((lm(value~treatment,data=b.mass,na.action=na.omit))), caption = 'Full experiment ANOVA')
+ggplot(b.mass, aes(treatment,value,colour=treatment))+ 
+  geom_boxplot()+
+  ylab('Mass')+ 
+  xlab('Treatment')+
+  theme_classic(base_size = 22)#remove background
+```
+
+####__Pairwise ANOVA__
+
+```{r, include=F}
+#then run anova
+myanova<-function(i){
+  anova.mass<-anova((lm(value~treatment,data=b.mass,day==i,na.action=na.omit)))
+}
+anova.stats<- sapply(unique(b.mass$day), myanova, simplify=FALSE)
+names(anova.stats)<-paste('Day -',unique(b.mass$day))#rename outputs to include days
+```
+
+Starting mass was not significantly different between treatments. The mass of high feed fish were significantly higher than the low feed starting at day 24 until day 98.
+
+```{r, echo=F}
+knitr::kable(anova.stats[[1]], caption = 'Mass ANOVA Day 0')
+knitr::kable(anova.stats[[2]], caption = 'Mass ANOVA Day 24')
+knitr::kable(anova.stats[[3]], caption = 'Mass ANOVA Day 48')
+knitr::kable(anova.stats[[4]], caption = 'Mass ANOVA Day 75')
+knitr::kable(anova.stats[[5]], caption = 'Mass ANOVA Day 91')
+knitr::kable(anova.stats[[6]], caption = 'Mass ANOVA Day 98')
+mean.mass = group_by(b.mass,day,treatment) %>% summarise(mean_mass=mean(value),sem_mass = sd(value)/sqrt(length(value)),n=length(value))
+mean.mass$sig = '*'
+mean.mass$sig[mean.mass$treatment=='l' | mean.mass$day == 0]=''
+#make plot for manuscript
+ggplot(mean.mass, aes(x = day, y =mean_mass, color = treatment))+
+  geom_point(size = 2)+
+  ylab('Mass (g)')+
+  geom_line()+
+  ylim(c(2.5,13))+
+  xlab('')+
+  geom_text(aes(label = sig),nudge_y=1, show.legend = FALSE, size= 8)+
+  scale_color_grey(start = 0.2, end = 0.6, name = 'Treatment', labels = c('High','Low'))+
+  geom_errorbar(aes(ymin=mean_mass - sem_mass, ymax = mean_mass + sem_mass), width = 1.5) +
+  scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
+  theme_classic(base_size = 18)+
+  theme(legend.position = c(0.22, 0.79))
+ggsave(filename = 'Figure1a.tiff', width = 7, height = 5)
+```
+
+```{r, include=F}
+#presentation graph
+ggplot(mean.mass, aes(x = day, y =mean_mass, color = treatment))+
+  geom_point(size=4)+
+  geom_line(size=1.5)+
+  ylab('Mass (g)')+
+  xlab('Day')+
+  ylim(c(2.5,13))+
+  geom_text(aes(label = sig),nudge_y=1,size = 12, color = 'black', show.legend = FALSE)+
+  geom_errorbar(aes(ymin=mean_mass - sem_mass, ymax = mean_mass + sem_mass), width = 1.5) +
+  scale_color_manual(values = c("#1f375c","#42b5b8"),name = 'Treatment', labels = c('High','Low'))+
+  scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
+  theme_classic(base_size = 24)+
+  theme(legend.position = c(0.22, 0.85), legend.key.height=unit(2,"line"))
+ggsave(filename = 'mass.rmANOVA-color.jpeg', width =10, height = 4.5)
+```
+
+
+####__Repeated measures__
+
+We ran a repeated measures ANOVA over time to determine if individual mass was higher in each fish.   
+
+First we tested the full model (mass~day*treatment + (1|tank/PITtag)), with day and treatment as fixed effects and an interaction and PITtag as a random effect nested within tank.
+
+```{r, echo=F, warning=FALSE, message=F}
+f.mass <- b.mass
+f.mass$day = as.factor(f.mass$day)#change days to factors
+f.mass$tank =as.factor(f.mass$tank)#change tank number to factor
+f.mass$PITtag = as.factor(f.mass$PITtag)#change tag number to factors
+mass.lmer2 =  lmer(value~day*treatment + (1|tank/PITtag), data = f.mass, REML = F) #full model
+knitr::kable(anova(mass.lmer2), caption = 'Full model')
+```
+
+We see all parameters are significant.  
+
+We then tested this model against the same model without nesting (mass~day*treatment+(1|PITtag)), to see if there was a tank effect.
+
+```{r, echo=F, message=F}
+mass.lmer = lmer(value~day*treatment+(1|PITtag), data = f.mass)#test tank effect
+knitr::kable(anova(mass.lmer2,mass.lmer), caption = 'ANOVA full model vs. sans-tank')#tank not significant so excluded
+```
+
+Notice these models are exactly the same (p = 1), so there is no tank effect thus we can ignore it.  
+
+Next we test the simplest model (mass~day*treatment) to see if PITtag has any impact. So we run an ANOVA between this simple model and the previous model that includes PITtag.
+
+```{r, echo=F, message=F}
+mass.lm = lm(value~day*treatment, data = f.mass)#simplest model
+knitr::kable(anova(mass.lmer,mass.lm), caption = 'ANOVA sans-tank vs. simple model')#PITtag significant so included
+```
+
+These models are significantly different so PITtag must be included in the final model as it has an effect on mass.  
+
+Our final model then is the sans-tank model (mass~day*treatment+(1|PITtag)) which we run a rmANOVA on to get our final statistics on parameter effects.
+
+
+```{r, echo=F, message=FALSE}
+anova.mass = summary(mass.lmer)
+knitr::kable(anova(mass.lmer), caption = 'rmANOVA Mass')
+```
+
+Both day and treatment had significant effects on mass as well as the interaction between treatment and day.  
+
+####__Pearson's correlations__
+#####__Total mass__
+
+```{r, include=F}
+#Mass
+cor.mass <- list()
+for (p in unique(b.mass$day)){#only have to run loop per day
+  igf1 = dplyr::filter(b.mass, day == p)$IGF1
+  mass = dplyr::filter(b.mass, day == p)$value#pull out mass
+  correlation = cor.test(igf1,mass,method='pearson')
+  correlation$data.name = as.character(p)
+  cor.mass = cbind(cor.mass,correlation)
+}
+```
+
+We tested if mass correlated to plasma IGF-1 levels using Pearson's product-moment correlation method. Data.name is the sampling day.
+
+```{r, echo=F, warning=F}
+knitr::kable(cor.mass[c(1:4,8,9),])
+final.mass = dplyr::filter(b.mass, day == 98)
+#initial.mass = dplyr::filter(b.mass, day == 0)
+ggplot(final.mass, aes(x = IGF1, y = value))+
+  geom_point(aes(fill = treatment), shape = 21, color = 'black', size = 2) + 
+  scale_fill_manual(name = 'Treatment', values = c('black','white'), labels = c('High','Low'))+
+  geom_smooth(method = lm, color = 'black')+
+  xlab('IGF1 ( ng / mL)')+
+  ylab('Final mass (g)')+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+
+```
+  
+Mass showed a significant correlation to IGF-1 at every time point.  
+ 
+#####>> __Within treatments__
+
+We also looked at the correlation of IGF-1 and mass within each treatment.
+
+
+```{r, include=F}
+##Within treatment
+#high
+mass.h <- dplyr::filter(b.mass, treatment == 'h')
+cor.mass.h <- list()
+for (q in unique(mass.h$day)){#only have to run loop per day
+  igf1 = dplyr::filter(mass.h, day == q)$IGF1
+  mass = dplyr::filter(mass.h, day == q)$value#pull out mass
+  correlation = cor.test(igf1,mass,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.mass.h = cbind(cor.mass.h,correlation)
+}
+#low
+mass.l <- dplyr::filter(b.mass, treatment == 'l')
+cor.mass.l <- list()
+for (q in unique(mass.l$day)){#only have to run loop per day
+  igf1 = dplyr::filter(mass.l, day == q)$IGF1
+  mass = dplyr::filter(mass.l, day == q)$value#pull out mass
+  correlation = cor.test(igf1,mass,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.mass.l = cbind(cor.mass.l,correlation)
+}
+```
+```{r, echo=F}
+knitr::kable(cor.mass.h[c(1:4,8,9),], caption = 'High treatment')
+knitr::kable(cor.mass.l[c(1:4,8,9),], caption = 'Low treatment')
+
+```
+ 
+While the high treatment does not correlate at any time point, the low treatment group correlated to IGF-1 at every time point.  
+
+#####__Mass-specific somatic growth rate__
+
+We then calculated somatic growth rate (SGR) using the equation: $SGR = log((mass_{final}-mass_{initial})/(day_{final}-day_{initial}))*100)$. 
+
+```{r, include=F}
+
+#Calculate SGR for mass
+#pull out tag, treatment, and igf1 values for one day (no repeats)
+tag <- dplyr::filter(b.mass, day == 0) %>% dplyr::select(.,PITtag)
+treatment <- dplyr::filter(b.mass, day == 0) %>% dplyr::select(.,treatment)
+IGF1 <- dplyr::filter(b.mass, day == 0) %>% dplyr::select(.,IGF1)
+dat.mass<-data.frame()
+for (d in 1:ncol(comb)){
+  fday = comb[2,d]
+  iday = comb[1,d]
+  f = dplyr::filter(b.mass, day == fday)$value
+  i = dplyr::filter(b.mass, day == iday)$value
+  sgr.mass = log (((f-i)/(fday - iday))*100 )#somatic growth rate formula
+  Comb = paste('Day',iday, fday, sep = '-')#make title
+  #rbind 
+  dat.mass = rbind(dat.mass, data.frame(tag, treatment, IGF1, Comb, sgr.mass))#combine all into dataframe  
+}
+#SGR mass correlations to IGF1
+#must remove Inf and NAs since pearson's cannot deal with them
+cor.sgr.mass<-dplyr::filter(dat.mass, sgr.mass!=-Inf & !is.na(IGF1))
+cor.sgrmass <- list()
+for (k in unique(cor.sgr.mass$Comb)){
+  mass = dplyr::filter(cor.sgr.mass, Comb==k)$sgr.mass#extract sgr of mass
+  igf1 = dplyr::filter(cor.sgr.mass, Comb==k)$IGF1#extract IGF concentrations
+  correlation = cor.test(mass,igf1,method='pearson')#calculate pearson's correlations
+  correlation$data.name = as.character(k)#rename to include day interval
+  cor.sgrmass = cbind(cor.sgrmass,correlation)#combine into one database
+}
+```
+```{r, echo=F}
+knitr::kable(cor.sgrmass[c(1:4,8,9),1:7])
+knitr::kable(cor.sgrmass[c(1:4,8,9),8:15])
+
+
+#graph whole experiment correlation
+mass.day0.98 = dplyr::filter(cor.sgr.mass, Comb == 'Day-0-98')
+ggplot(mass.day0.98, aes(x = IGF1, y = sgr.mass, color = treatment)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
+  scale_color_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('')+
+  ylab('SGR Mass (% / day)')+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+ggsave(filename = 'Fig4a.tiff', width = 7, height = 5)
+```
+```{r, include=F}
+anova(lm(sgr.mass~treatment,data = dplyr::filter(dat.mass, Comb == 'Day-0-98')))
+#For manuscript
+last.sgr.mass <- dplyr::filter(dat.mass, Comb == 'Day-0-98')%>% group_by(treatment) %>% summarize(average_sgr = mean(sgr.mass), sem_sgr =  sd(sgr.mass)/sqrt(length(sgr.mass)),n=length(sgr.mass))
+last.sgr.mass$text = c('*','')
+ggplot(last.sgr.mass, aes(x = treatment, y = average_sgr, fill = treatment))+
+  ylab('SGR mass (% / day)')+
+  xlab('')+
+  geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
+  scale_fill_grey(start = 0.5, end = 0.9)+  
+  scale_y_continuous(expand = c(0,0),limits = c(0,4))+
+  scale_x_discrete(labels = c("High","Low"))+
+  geom_errorbar(aes(ymin=average_sgr - sem_sgr, ymax=average_sgr + sem_sgr), width = 0.4, size = 1)+
+  theme_classic(base_size = 18)+
+  geom_text(aes(label = text),nudge_y=0.25, size = 8)+
+  theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 18), axis.text.y = element_text(size = 18), plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig2a.tiff', width = 7, height = 5)
+```
+```{r, include=F}
+#presentation graph
+ggplot(mass.day0.98, aes(x = IGF1, y = sgr.mass)) + 
+  geom_point(aes(fill = treatment), shape = 21, color =('black'), size = 4) + 
+  scale_fill_manual(name = 'Treatment', values = c("#1f375c","#42b5b8"), labels = c('High','Low'))+
+  geom_smooth(method = lm, color = 'black', fullrange = T)+
+  scale_x_continuous(expand=c(0,0), limits=c(0,35)) +
+  scale_y_continuous(expand=c(0,0), limits=c(-5,3)) +
+  coord_cartesian(xlim=c(0,35), ylim=c(0,3)) +
+  xlab('Plasma IGF1 ( ng / mL)')+
+  ylab('SGR mass')+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.8,0.15),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'cor.sgrmass-color.jpeg', width = 5, height = 5)
+```
+  
+All time intervals for mass-specific SGR were correlated to plasma IGF-I except the first (day 0-24) and last (day 91-98) time periods.  
+  
+#####>> __Within treatments__
+
+Again looking at within treatment correlations for mass-specific SGR.
+
+```{r, include=F}
+
+##Within treatment
+#high
+sgrmass.h <- dplyr::filter(cor.sgr.mass, treatment == 'h')
+cor.sgrmass.h <- list()
+for (q in unique(sgrmass.h$Comb)){#only have to run loop per day
+  igf1 = dplyr::filter(sgrmass.h, Comb == q)$IGF1
+  mass = dplyr::filter(sgrmass.h, Comb == q)$sgr.mass#pull out mass
+  correlation = cor.test(igf1,mass,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.sgrmass.h = cbind(cor.sgrmass.h,correlation)
+}
+#low
+sgrmass.l <- dplyr::filter(cor.sgr.mass, treatment == 'l')
+cor.sgrmass.l <- list()
+for (q in unique(sgrmass.l$Comb)){#only have to run loop per day
+  igf1 = dplyr::filter(sgrmass.l, Comb == q)$IGF1
+  mass = dplyr::filter(sgrmass.l, Comb == q)$sgr.mass#pull out sl
+  correlation = cor.test(igf1,mass,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.sgrmass.l = cbind(cor.sgrmass.l,correlation)
+}
+```
+```{r, echo=F}
+knitr::kable(cor.sgrmass.h[c(1:4,8,9),1:7], caption = 'High treatment')
+knitr::kable(cor.sgrmass.h[c(1:4,8,9),8:15])  
+
+knitr::kable(cor.sgrmass.l[c(1:4,8,9),1:7])
+knitr::kable(cor.sgrmass.l[c(1:4,8,9),8:15], caption = 'Low treatment')
+ggplot(mass.day0.98, aes(x = IGF1, y = sgr.mass, fill = treatment)) + 
+  geom_point(aes(fill = treatment), shape = 21, color =('black'), size = 4) + 
+  scale_fill_manual(name = 'Treatment', values = c("#1f375c","#42b5b8"), labels = c('High','Low'))+
+  geom_smooth(method = lm, color = 'black', fullrange = T)+
+  scale_x_continuous(expand=c(0,0), limits=c(0,35)) +
+  scale_y_continuous(expand=c(0,0), limits=c(-5,3)) +
+  coord_cartesian(xlim=c(0,35), ylim=c(0,3)) +
+  xlab('Plasma IGF1 ( ng / mL)')+
+  ylab('SGR mass')+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.8,0.15),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'cor.sgrmassin-color.jpeg', width = 5, height = 5)
+```
+  
+For SGR, neither treatment were significantly correlated to IGF-1 at any time interval.  
+
+***
+
+
+###__Standard Length__
+
+Next we run all the same statistical tests on standard length.
+```{r, echo=F}
+knitr::kable(anova((lm(value~treatment,data=b.length,na.action=na.omit))), caption = 'Full experiment ANOVA')
+ggplot(b.length, aes(treatment,value,colour=treatment))+ 
+  geom_boxplot()+
+  ylab('SL') + 
+  theme_classic(base_size = 18)
+```
+
+Standard length was significantly different between treatments after 98 days of feeding.
+
+####__Pairwise ANOVA__
+
+
+```{r, include=F}
+#then run anova
+myanova<-function(i){
+  anova.sl<-anova((lm(value~treatment,data=b.length,day==i,na.action=na.omit)))
+}
+anova.stats<- sapply(unique(b.length$day), myanova, simplify=FALSE)
+names(anova.stats)<-paste('Day -',unique(b.length$day))#rename outputs to include days
+```
+
+```{r, echo=F}
+knitr::kable(anova.stats[[1]], caption = 'SL ANOVA Day 0')
+knitr::kable(anova.stats[[2]], caption = 'SL ANOVA Day 24')
+knitr::kable(anova.stats[[3]], caption = 'SL ANOVA Day 48')
+knitr::kable(anova.stats[[4]], caption = 'SL ANOVA Day 75')
+knitr::kable(anova.stats[[5]], caption = 'SL ANOVA Day 91')
+knitr::kable(anova.stats[[6]], caption = 'SL ANOVA Day 98')
+#manuscript graph
+mean.length = group_by(b.length,day,treatment) %>% summarise(mean_length=mean(value),sem_length = sd(value)/sqrt(length(value)),n=length(value))
+mean.length$sig = '*'
+mean.length$sig[mean.length$treatment=='l' | mean.length$day == 0 | mean.length$day == 24]=''
+ggplot(mean.length, aes(x = day, y = mean_length, color = treatment))+
+  geom_line()+
+  ylab('Length (mm)')+
+  xlab('')+
+  ylim(c(55,90))+
+  geom_point(size = 2)+
+  geom_text(aes(label = sig),nudge_y=3,size = 8, color = 'black', show.legend = FALSE)+
+  geom_errorbar( aes(ymin=mean_length - sem_length, ymax = mean_length + sem_length), width = 1.5)+
+  scale_color_grey(start = 0.2, end = 0.6, name = 'Treatment', labels = c('High','Low'))+
+  scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
+  theme_classic(base_size = 18)+
+  theme(legend.position = 'none')
+ggsave(filename = 'Figure1b.tiff', width = 7, height = 5)
+```
+```{r, include=F}
+#presentation graph
+ggplot(mean.length, aes(x = day, y = mean_length, color = treatment))+
+  geom_line(size=1.5)+ylab('Length (mm)')+
+  xlab('Day')+
+  ylim(c(55,90))+
+  geom_point(size=4)+
+  geom_text(aes(label = sig),nudge_y=3,size = 12, color = 'black', show.legend = FALSE)+
+  geom_errorbar(size=1.2, aes(ymin=mean_length - sem_length, ymax = mean_length + sem_length), width = 1.5)+
+  scale_color_manual(values = c("#1f375c","#42b5b8"),name = 'Treatment', labels = c('High','Low'))+
+  scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
+  theme_classic(base_size = 24)+
+  theme(legend.position = c(0.22, 0.85), legend.key.height=unit(2,"line"))
+ggsave(filename = 'sl.rmANOVA-color1.jpeg',width =10, height = 4.5)
+```
+
+SL is not significantly different between treatments until day 48 and maintains this difference until the end of the experiment.
+
+
+####__Repeated measures__
+
+Following the same method as we did with mass, we first test the full model.
+
+```{r, echo=FALSE}
+b.length$day = as.factor(b.length$day)#change days to factors
+b.length$tank =as.factor(b.length$tank)#change tank number to factor
+b.length$PITtag = as.factor(b.length$PITtag)#change tag number to factors
+length.lmer = lmer(value~day*treatment + (1|tank/PITtag), data = b.length, REML = F) #full model
+knitr::kable(anova(length.lmer), caption = 'Full model')
+```
+
+And see that everything is significant.  
+So we then run the same model without 'tank' and compare to the full model.
+
+```{r, echo=F}
+length.lmer2 = lmer(value~day*treatment + (1|PITtag), data = b.length, REML = F)#model without tank affects
+knitr::kable(anova(length.lmer,length.lmer2),caption = 'Full model vs. sans-tank')#compare full model and wihtout tanks to see if tank is significant
+```
+
+Tank does not affect the model so we'll exclude it.  
+Then eliminate PITtag and compare to the previous model.
+
+```{r, echo=F}
+length.lm = lm(value~day*treatment, data=b.length)#simplest model
+knitr::kable(anova(length.lmer2,length.lm), caption = 'Sans-tank vs. simplest')#compare model wihtouttanks to simple model to see PITtag affect
+```
+
+PITtag significantly changed the model so we must include it.  
+Thus we stick with the same model as in mass.
+
+```{r, echo=F}
+anova.length = summary(length.lmer2) #no tank effect so excuded but PITtag significant
+knitr::kable(anova(length.lmer2), caption = 'Final rmANOVA model')
+```
+
+All parameters are significant including the interaction between day and treatment.
+
+
+
+####__Pearson's correlations__
+#####__Total length__
+First looking at if IGF-1 correlates to SL for each measurement day.
+
+```{r, include=F}
+#SL
+cor.sl <- list()
+for (m in unique(b.length$day)){#only have to run loop per day
+  igf1 = dplyr::filter(b.length, day == m)$IGF1
+  sl = dplyr::filter(b.length, day == m)$value#pull out sl
+  correlation = cor.test(igf1,sl,method='pearson')
+  correlation$data.name = as.character(m)
+  cor.sl = cbind(cor.sl,correlation)
+}
+```
+
+```{r, echo=F, warning=F}
+knitr::kable(cor.sl[c(1:4,8,9),])
+final.sl = dplyr::filter(b.length, day == 98)
+ggplot(final.sl, aes(x = IGF1, y = value)) + 
+  geom_point(aes(fill = treatment), shape = 21, color = 'black', size = 2) + 
+  scale_fill_manual(name = 'Treatment', values = c('black','white'), labels = c('High','Low'))+
+  geom_smooth(method = lm, color = 'black')+
+  xlab('IGF1 ( ng / mL)')+
+  ylab('Final SL (mm)')+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+```
+
+Every day correlates except for day 0.  
+
+#####>> __Within treatments__
+```{r, include=F}
+#high
+length.h <- dplyr::filter(b.length, treatment == 'h')
+cor.sl.h <- list()
+for (q in unique(length.h$day)){#only have to run loop per day
+  igf1 = dplyr::filter(length.h, day == q)$IGF1
+  sl = dplyr::filter(length.h, day == q)$value#pull out sl
+  correlation = cor.test(igf1,sl,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.sl.h = cbind(cor.sl.h,correlation)
+}
+#low
+length.l <- dplyr::filter(b.length, treatment == 'l')
+cor.sl.l <- list()
+for (q in unique(length.l$day)){#only have to run loop per day
+  igf1 = dplyr::filter(length.l, day == q)$IGF1
+  sl = dplyr::filter(length.l, day == q)$value#pull out sl
+  correlation = cor.test(igf1,sl,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.sl.l = cbind(cor.sl.l,correlation)
+}
+```
+```{r, echo=F}
+knitr::kable(cor.sl.h[c(1:4,8,9),], caption = 'High treatment')
+knitr::kable(cor.sl.l[c(1:4,8,9),], caption = 'Low treatment')
+```
+
+Similar to mass, SL of high feed did not correlate at any time point but low feed correlated at every time point.  
+
+#####__Length-specific SGR__
+Now to length-specific SGR which is calculated the same way as mass-specific SGR.
+```{r, include=F}
+
+
+#calculate SGR for SL
+dat.sl<-data.frame()
+for (d in 1:ncol(comb)){
+  fday = comb[2,d]
+  iday = comb[1,d]
+  f = dplyr::filter(b.length, day == fday)$value
+  i = dplyr::filter(b.length, day == iday)$value
+  sgr.sl = log (((f-i)/(fday - iday))*100 )#somatic growth rate formula
+  Comb = paste('Day',iday, fday, sep = '-')#make title
+  #rbind 
+  dat.sl = rbind(dat.sl, data.frame(tag, treatment, IGF1, Comb, sgr.sl))#combine all into dataframe  
+}
+cor.sgr.sl<-dplyr::filter(dat.sl, sgr.sl!=-Inf & !is.na(IGF1))
+cor.sgrsl <- list()
+for (k in unique(cor.sgr.sl$Comb)){
+  sl = dplyr::filter(cor.sgr.sl, Comb==k)$sgr.sl#extract sgr of sl
+  igf1 = dplyr::filter(cor.sgr.sl, Comb==k)$IGF1#extract IGF concentrations
+  correlation = cor.test(sl,igf1,method='pearson')#calculate pearson's correlations
+  correlation$data.name = as.character(k)#rename to include day interval
+  cor.sgrsl = cbind(cor.sgrsl,correlation)#combine into one database
+}
+```
+```{r, echo=F}
+knitr::kable(cor.sgrsl[c(1:4,8,9),1:7])
+knitr::kable(cor.sgrsl[c(1:4,8,9),8:15])
+
+sl.day0.98 = dplyr::filter(cor.sgr.sl, Comb == 'Day-0-98')
+anova(lm(sgr.sl~treatment, data = sl.day0.98))
+last.sgr.sl <- sl.day0.98 %>% group_by(treatment) %>% summarize(average_sgr = mean(sgr.sl), sem_sgr =  sd(sgr.sl)/sqrt(length(sgr.sl)),n=length(sgr.sl))
+last.sgr.sl$text = c('*','')
+ggplot(last.sgr.sl, aes(x = treatment, y = average_sgr, fill = treatment))+
+  ylab('SGR SL (% / day)')+
+  xlab('Treatment')+
+  geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
+  scale_fill_manual(values = c('black','grey'))+
+  scale_color_manual(values = c('black','grey'))+
+  scale_y_continuous(expand = c(0,0),limits = c(0,4))+
+  scale_x_discrete(labels = c("High","Low"))+
+  geom_errorbar(aes(ymin=average_sgr - sem_sgr, ymax=average_sgr + sem_sgr), width = 0.4, size = 1)+
+  theme_classic(base_size = 18)+
+  geom_text(aes(label = text),nudge_y=0.25, size = 8)+
+  theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 18), axis.text.y = element_text(size = 18), plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig2b.tiff', width = 7, height = 5)
+
+#graph whole experiment correlation
+ggplot(sl.day0.98, aes(x = IGF1, y = sgr.sl, color = treatment)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
+  scale_color_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('Plasma IGF1 ( ng / mL)')+
+  ylab('SGR SL (% / day)')+
+  theme_classic(base_size = 18)+
+  theme(legend.position = 'none', plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig4b.tiff', width = 7, height = 5)
+```
+
+Length-specific SGR did not correlate as well as mass-specific SGR over all. SL-SGR correlated for all time intervals that contained day 0 and for intervals that surpased 40 days but not for many intervals in the middle of the experiment that were less than 30 days.    
+
+#####>> __Within treatments__
+```{r, include=F}
+#high
+sgrlength.h <- dplyr::filter(cor.sgr.sl, treatment == 'h')
+cor.sgrsl.h <- list()
+for (q in unique(sgrlength.h$Comb)){#only have to run loop per day
+  igf1 = dplyr::filter(sgrlength.h, Comb == q)$IGF1
+  sl = dplyr::filter(sgrlength.h, Comb == q)$sgr.sl#pull out sl
+  correlation = cor.test(igf1,sl,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.sgrsl.h = cbind(cor.sgrsl.h,correlation)
+}
+#low
+sgrlength.l <- dplyr::filter(cor.sgr.sl, treatment == 'l')
+cor.sgrsl.l <- list()
+for (q in unique(sgrlength.l$Comb)){#only have to run loop per day
+  igf1 = dplyr::filter(sgrlength.l, Comb == q)$IGF1
+  sl = dplyr::filter(sgrlength.l, Comb == q)$sgr.sl#pull out sl
+  correlation = cor.test(igf1,sl,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.sgrsl.l = cbind(cor.sgrsl.l,correlation)
+}
+```
+```{r, echo=F}
+knitr::kable(cor.sgrsl.h[c(1:4,8,9),1:7], caption = 'High treatment')
+knitr::kable(cor.sgrsl.h[c(1:4,8,9),8:15])  
+
+knitr::kable(cor.sgrsl.l[c(1:4,8,9),1:7])
+knitr::kable(cor.sgrsl.l[c(1:4,8,9),8:15], caption = 'Low treatment')
+```
+
+Again, none of the high treatment time intervals correlate to IGF-1 but unlike mass-specific SGR, none of the low treatment intervals correlate either.  
+
+###Condition Factor
+
+We calculated Condition Factor from standard lengths and weights using the formula: $K = (mass/(length^{3}))*100$.  
+
+```{r, include = F}
+
+#calculate Condition factor
+dat.cf<-data.frame()
+day <- b.mass$day
+tank<- b.mass$tank
+m = dplyr::filter(b, mass.sl == 'mass')$value
+l = dplyr::filter(b, mass.sl == 'SL')$value
+l = l/10#convert to centimeters
+cf = (m/(l^3))*100 #condition factor formula
+dat.cf = rbind(dat.cf, data.frame(tag, day, treatment, tank, IGF1, cf))#combine all into dataframe
+
+```
+
+Condition factor was significantly different between treatment groups.
+
+```{r, echo=F}
+knitr::kable(anova((lm(cf~treatment,data=dat.cf,na.action=na.omit))), caption = 'CF ANOVA')
+```
+
+####__Pairwise ANOVAs__
+
+```{r, include=F}
+#then run anova
+myanova<-function(i){
+  anova.cf<-anova((lm(cf~treatment,data=dat.cf,day==i,na.action=na.omit)))
+}
+anova.stats<- sapply(unique(dat.cf$day), myanova, simplify=FALSE)
+names(anova.stats)<-paste('Day -',unique(dat.cf$day))#rename outputs to include days
+```
+
+
+```{r, echo=F}
+ggplot(dat.cf, aes(treatment,cf,colour=treatment))+ 
+  geom_boxplot() + 
+  theme_classic(base_size = 18)
+```
+
+
+
+Condition factor becomes significantly different between treatment groups by day 24 and stays this way until the termination of the experiment.
+
+```{r, echo=F}
+knitr::kable(anova.stats[[1]], caption = 'CF ANOVA Day 0')
+knitr::kable(anova.stats[[2]], caption = 'CF ANOVA Day 24')
+knitr::kable(anova.stats[[3]], caption = 'CF ANOVA Day 48')
+knitr::kable(anova.stats[[4]], caption = 'CF ANOVA Day 75')
+knitr::kable(anova.stats[[5]], caption = 'CF ANOVA Day 91')
+knitr::kable(anova.stats[[6]], caption = 'CF ANOVA Day 98')
+
+
+mean.cf =  group_by(dat.cf,day,treatment) %>% summarise(average_cf=mean(cf),sem_cf = sd(cf)/sqrt(length(cf)),n=length(cf))
+mean.cf$sig = '*'
+mean.cf$sig[mean.cf$treatment=='l' | mean.cf$day == 0]=''
+ggplot(mean.cf, aes(x = day, y = average_cf, color = treatment))+
+  geom_line()+
+  ylab(expression(paste('CF ( g / ',cm^3,' )')))+
+  xlab('Day')+
+  geom_point(size = 2)+
+  geom_text(aes(label = sig),nudge_y=.05, show.legend = FALSE, size = 8)+
+  scale_color_grey(start = 0.2, end = 0.6, name = 'Treatment', labels = c('High','Low'))+
+  geom_errorbar(aes(ymin=average_cf - sem_cf, ymax = average_cf + sem_cf), width = 1.5) +
+  scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
+  theme_classic(base_size = 18)+
+  theme(legend.position = 'none')
+ggsave(filename = 'Figure1c.tiff', width = 7, height = 5)
+```
+
+####__Repeated measures ANOVA__
+```{r,include=F}
+dat.cf$day = as.factor(dat.cf$day)#change days to factors
+dat.cf$tank = as.factor(dat.cf$tank)#change tank number to factor
+dat.cf$PITtag = as.factor(dat.cf$PITtag)#change tag number to factors
+#lmer doesn't work for some reason so use lme instead to get p-values
+library(nlme)
+cf.full = lme(cf~day*treatment, random=~1|tank/PITtag, data = dat.cf) #test tank effect
+```
+```{r}
+knitr::kable(anova(cf.full), caption = 'Full model')
+```
+
+```{r}
+cf.notank = lme(cf~day*treatment, random=~1|PITtag, data = dat.cf)#model with no tank effect
+knitr::kable(anova(cf.full, cf.notank)[,2:9],caption = 'Full model vs. sans-tank')#compare models to see tank effect
+```
+
+Tank not significant so exclude it.  
+
+```{r}
+cf.simple = lm(cf~day*treatment, data = dat.cf)
+knitr::kable(anova(cf.notank, cf.simple)[,2:9], caption = 'With and without PITtag')
+```
+
+PITtag significantly changed the model so we include it in the final model.  
+
+```{r}
+sumcf = summary(cf.notank)
+knitr::kable(anova(cf.notank), caption = 'Final model rmANOVA')
+```
+
+
+
+####__Pearson's correlations__
+#####__Total CF__
+
+```{r, warning=F}
+cor.cf <- list()
+for (l in unique(dat.cf$day)){#only have to run loop per day
+  igf1 = dplyr::filter(dat.cf, day == l)$IGF1
+  cf = dplyr::filter(dat.cf, day == l)$cf
+  correlation = cor.test(igf1,cf,method='pearson')
+  correlation$data.name = as.character(l)
+  cor.cf = cbind(cor.cf,correlation)
+}
+knitr::kable(cor.cf[c(1:4,8,9),])
+cf.day98 = dplyr::filter(dat.cf, day == 98)
+ggplot(cf.day98, aes(x = IGF1, y = cf)) + 
+  geom_point(aes(fill = treatment), shape = 21, color = 'black', size = 2) + 
+  scale_fill_manual(name = 'Treatment', values = c('black','white'), labels = c('High','Low'))+
+  xlab('IGF1 ( ng / mL)')+
+  ylab('CF')+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+```
+
+None of the days are significant.  
+
+#####>> __Within treatments__
+
+```{r, include=F}
+##Within treatment
+#high
+cf.h <- dplyr::filter(dat.cf, treatment == 'h')
+cor.cf.h <- list()
+for (q in unique(cf.h$day)){#only have to run loop per day
+  igf1 = dplyr::filter(cf.h, day == q)$IGF1
+  cf = dplyr::filter(cf.h, day == q)$cf#pull out cf
+  correlation = cor.test(igf1,cf,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.cf.h = cbind(cor.cf.h,correlation)
+}
+#low
+cf.l <- dplyr::filter(dat.cf, treatment == 'l')
+cor.cf.l <- list()
+for (q in unique(cf.l$day)){#only have to run loop per day
+  igf1 = dplyr::filter(cf.l, day == q)$IGF1
+  cf = dplyr::filter(cf.l, day == q)$cf#pull out cf
+  correlation = cor.test(igf1,cf,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.cf.l = cbind(cor.cf.l,correlation)
+}
+```
+```{r}
+knitr::kable(cor.cf.h[c(1:4,8,9),], caption = 'High treatment')
+knitr::kable(cor.cf.l[c(1:4,8,9),], caption = 'Low treatment')
+```
+
+None of the days are significant for either treatment.  
+
+#####__Change in CF__
+
+We also looked at the change in K between time points and see if this correlates with IGF-!.
+
+```{r, include=F}
+#calculate change in CF
+cfrate<-data.frame()
+for (d in 1:ncol(comb)){
+  fday = comb[2,d]
+  iday = comb[1,d]
+  f = dplyr::filter(dat.cf, day == fday)$cf
+  i = dplyr::filter(dat.cf, day == iday)$cf
+  cf.rate = ((f-i)/(fday - iday))*100 #rate formula
+  Comb = paste('Day',iday, fday, sep = '-')#make title
+  #rbind 
+  cfrate = rbind(cfrate, data.frame(tag, treatment, IGF1, Comb, cf.rate))#combine all into dataframe  
+}
+cor.cfrate <-list()
+for (k in unique(cfrate$Comb)){
+  cf = dplyr::filter(cfrate, Comb==k)$cf.rate#extract cf values
+  igf1 = dplyr::filter(cfrate, Comb==k)$IGF1#extract IGF concentrations
+  correlation = cor.test(cf,igf1,method='pearson')#calculate pearson's correlations
+  correlation$data.name = as.character(k)#rename to include day interval
+  cor.cfrate = cbind(cor.cfrate,correlation)#combine into one database
+}
+```
+```{r, warning=F}
+knitr::kable(cor.cfrate[c(1:4,8,9),1:7])
+knitr::kable(cor.cfrate[c(1:4,8,9),8:15])
+cf.day0.98 = dplyr::filter(cfrate, Comb == 'Day-0-98')
+ggplot(cf.day0.98, aes(x = IGF1, y = cf.rate)) + 
+  geom_point(aes(fill = treatment), shape = 21, color = 'black', size = 2) + 
+  scale_fill_manual(name = 'Treatment', values = c('black','white'), labels = c('High','Low'))+
+  xlab('IGF1 ( ng / mL)')+
+  ylab('CF rate')+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+```
+
+None of the time points correlate.  
+
+#####>> __Within treatments__
+
+```{r, include=F}
+#within treatment
+#low
+cfrate.l <- dplyr::filter(cfrate, treatment == 'l')
+cor.cfrate.l <- list()
+for (q in unique(cfrate.l$Comb)){#only have to run loop per day
+  igf1 = dplyr::filter(cfrate.l, Comb == q)$IGF1
+  cf = dplyr::filter(cfrate.l, Comb == q)$cf.rate#pull out sl
+  correlation = cor.test(igf1,cf,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.cfrate.l = cbind(cor.cfrate.l,correlation)
+}
+capture.output(cor.cfrate.l, file='cor.cfrate.l.txt')
+#high
+cfrate.h <- dplyr::filter(cfrate, treatment == 'h')
+cor.cfrate.h <- list()
+for (q in unique(cfrate.h$Comb)){#only have to run loop per day
+  igf1 = dplyr::filter(cfrate.h, Comb == q)$IGF1
+  cf = dplyr::filter(cfrate.h, Comb == q)$cf.rate#pull out sl
+  correlation = cor.test(igf1,cf,method='pearson')
+  correlation$data.name = as.character(q)
+  cor.cfrate.h = cbind(cor.cfrate.h,correlation)
+}
+```
+```{r}
+knitr::kable(cor.sgrsl.h[c(1:4,8,9),1:7], caption = 'High treatment')
+knitr::kable(cor.sgrsl.h[c(1:4,8,9),8:15])  
+
+knitr::kable(cor.sgrsl.l[c(1:4,8,9),1:7])
+knitr::kable(cor.sgrsl.l[c(1:4,8,9),8:15], caption = 'Low treatment')
+```
+
+None of the time intervals are significantly correlated to IGF-1.
+
+
+
+
+
+
+  
+  
+***

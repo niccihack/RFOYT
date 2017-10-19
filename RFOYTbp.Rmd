@@ -15,11 +15,11 @@ knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r, echo=F, include=F}
-packages <- c('readxl','tidyverse','readr','data.table','dplyr','car','ggplot2')
+packages <- c('readxl','tidyverse','readr','data.table','dplyr','car','ggplot2','nortest','broom')
 lapply(packages, require, character.only = T)
 ```
 
-```{r, echo=FALSE, include=F}
+```{r, echo=FALSE, include=F, message=F}
 #Load data sheets.
 mrpl17<-read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/RF muscle/RF muscle/YT-muscle-rpl17 -  Quantification Cq Results_0.csv")
 mrpl17 <- mrpl17[mrpl17$Sample != 63,]#remove row 63 the only yellowtail 
@@ -103,7 +103,30 @@ dat_test3 = filter(dat_test3, !is.na(Cq))
 dat_test3$housekeeping = FALSE
 dat_test3$housekeeping[dat_test3$gene == 'mef1a' | 
                          dat_test3$gene == 'mrpl17'] = TRUE
+
+#find geometric mean of housekeepers and normalized Cq 
+adj_Cq = plyr::ddply(dat_test3, 'Sample', function(x){
+  target_genes = x[!x$housekeeping,]
+  housekeeping_genes = x[x$housekeeping,]
+  
+  target_genes$mean_housekeeping = prod(housekeeping_genes$Cq)^(1/length(housekeeping_genes$Cq))#geometric mean
+  
+  target_genes$Cq_normalized = target_genes$Cq/target_genes$mean_housekeeping#normalize all genes to their geometric mean
+  return(target_genes)
+})
 ```
+
+```{r}
+
+#Find mean for graphing
+Cq = adj_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
+
+knitr::kable(Cq, caption = 'Summary table')
+
+ggplot(adj_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
+  geom_boxplot()
+```
+
 
 ##Finding outliers
 
@@ -124,24 +147,13 @@ knitr::kable(refouts, caption = "Reference genes")
 Perhaps samples **113, 73, 54, & 44** should be removed?
 
 ```{r, echo=F}
-#find geometric mean of housekeepers and normalized Cq 
-adj_Cq = plyr::ddply(dat_test3, 'Sample', function(x){
-  target_genes = x[!x$housekeeping,]
-  housekeeping_genes = x[x$housekeeping,]
-  
-  target_genes$mean_housekeeping = prod(housekeeping_genes$Cq)^(1/length(housekeeping_genes$Cq))#geometric mean
-  
-  target_genes$Cq_normalized = target_genes$Cq/target_genes$mean_housekeeping#normalize all genes to their geometric mean
-  return(target_genes)
-})
-
 
 #Find outliers
 out_Cq = adj_Cq %>% group_by(gene) %>%
-  filter(Cq_normalized < 3*sd(Cq_normalized)+mean(Cq_normalized) & Cq_normalized > mean(Cq_normalized)-(3*sd(Cq_normalized)))
+  filter(Cq_normalized < (3*sd(Cq_normalized)+mean(Cq_normalized)) & Cq_normalized >( mean(Cq_normalized)-(3*sd(Cq_normalized))))
 
 mremoved = adj_Cq %>% group_by(gene) %>%
-  filter(Cq_normalized > 3*sd(Cq_normalized)+mean(Cq_normalized) | Cq_normalized < mean(Cq_normalized)-(3*sd(Cq_normalized)))
+  filter(Cq_normalized < (mean(Cq_normalized)-(3*sd(Cq_normalized))) |  Cq_normalized > (3*sd(Cq_normalized)+mean(Cq_normalized)))
 ```
 
 Samples **#54  and 73** were removed due to over/under 3 std
@@ -152,6 +164,7 @@ knitr::kable(mremoved, caption = 'Samples removed from statistics')
 out = out_Cq %>% group_by(gene,treatment) %>% summarize(max = max(Cq_normalized),min = min(Cq_normalized), max_sample = Sample[which(Cq_normalized == max)], min_sample = Sample[which(Cq_normalized == min)]) %>% arrange(min_sample)
 ```
 
+Maximums and minimums of whole dataset after removing previous outliers.
 
 ```{r, echo=F}
 
@@ -161,17 +174,16 @@ knitr::kable(out,caption = 'Possible outliers of whole dataset')
 
 Possibly remove **#113, 38, & 44**.
 
+---
 
 Graph of data with only **#73 and 54** removed.
-```{r Muscle graphs, echo=F}
-#Find mean for graphing
-Cq = out_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
 
+```{r, echo=F}
 ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
   geom_boxplot()
 #then run anova
 myanova<-function(i){
-  anova.genes<-anova((lm(Cq~treatment,data=out_Cq,gene==i,na.action=na.omit)))
+  anova.genes<-lm(Cq_normalized~treatment,data=out_Cq,gene==i,na.action=na.omit)
 }
 anova.stats.m<- sapply(unique(out_Cq$gene), myanova, simplify=FALSE)
 names(anova.stats.m)<-paste(unique(out_Cq$gene))#rename outputs to include days
@@ -181,17 +193,19 @@ capture.output(anova.stats.m, file = 'Muscle-gene-anova.txt')
 ##Statistics
 
 ```{r Manuscript graphs, echo=F}
-knitr::kable(anova.stats.m[[1]], caption = 'BP2a')
-knitr::kable(anova.stats.m[[2]], caption = 'BP2b')
-knitr::kable(anova.stats.m[[3]], caption = 'BP5a')
-knitr::kable(anova.stats.m[[4]], caption = 'BP5b')
-knitr::kable(anova.stats.m[[5]], caption = 'IGF1')
-knitr::kable(anova.stats.m[[6]], caption = 'IGF2')
-knitr::kable(anova.stats.m[[7]], caption = 'Recepter A')
-knitr::kable(anova.stats.m[[8]], caption = 'Recepter B')
+knitr::kable(anova(anova.stats.m[[1]]), caption = 'BP2a')
+knitr::kable(anova(anova.stats.m[[2]]), caption = 'BP2b')
+knitr::kable(anova(anova.stats.m[[3]]), caption = 'BP5a')
+knitr::kable(anova(anova.stats.m[[4]]), caption = 'BP5b')
+knitr::kable(anova(anova.stats.m[[5]]), caption = 'IGF1')
+knitr::kable(anova(anova.stats.m[[6]]), caption = 'IGF2')
+knitr::kable(anova(anova.stats.m[[7]]), caption = 'Recepter A')
+knitr::kable(anova(anova.stats.m[[8]]), caption = 'Recepter B')
 ```
 
-Only Recepter A significant.
+bp5b and igf1 are significant.
+
+---
 
 Now removing recommended **#113, 44, & 38**.
 ```{r, echo=F}
@@ -202,29 +216,182 @@ Rerun graphs and stats.
 
 ```{r, echo=F}
 
-#Find mean for graphing
-Cq = out_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
-
 ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
   geom_boxplot()
 #then run anova
 myanova<-function(i){
-  anova.genes<-anova((lm(Cq~treatment,data=out_Cq,gene==i,na.action=na.omit)))
+  anova.genes<-lm(Cq_normalized~treatment,data=out_Cq,gene==i,na.action=na.omit)
 }
 anova.stats.m<- sapply(unique(out_Cq$gene), myanova, simplify=FALSE)
 names(anova.stats.m)<-paste(unique(out_Cq$gene))#rename outputs to include days
 
-knitr::kable(anova.stats.m[[1]], caption = 'BP2a')
-knitr::kable(anova.stats.m[[2]], caption = 'BP2b')
-knitr::kable(anova.stats.m[[3]], caption = 'BP5a')
-knitr::kable(anova.stats.m[[4]], caption = 'BP5b')
-knitr::kable(anova.stats.m[[5]], caption = 'IGF1')
-knitr::kable(anova.stats.m[[6]], caption = 'IGF2')
-knitr::kable(anova.stats.m[[7]], caption = 'Recepter A')
-knitr::kable(anova.stats.m[[8]], caption = 'Recepter B')
+knitr::kable(anova(anova.stats.m[[1]]), caption = 'BP2a')
+knitr::kable(anova(anova.stats.m[[2]]), caption = 'BP2b')
+knitr::kable(anova(anova.stats.m[[3]]), caption = 'BP5a')
+knitr::kable(anova(anova.stats.m[[4]]), caption = 'BP5b')
+knitr::kable(anova(anova.stats.m[[5]]), caption = 'IGF1')
+knitr::kable(anova(anova.stats.m[[6]]), caption = 'IGF2')
+knitr::kable(anova(anova.stats.m[[7]]), caption = 'Recepter A')
+knitr::kable(anova(anova.stats.m[[8]]), caption = 'Recepter B')
+
 ```
 
-Recepter A more significant, no others significant.
+bp5a now also significant.
+
+##Test for normality
+
+Run Shapiro-Wilkes test for normality on residuals of linear model.
+```{r Muscle graphs, echo=F}
+#Check for normality
+
+shapiro <- list()
+for(n in 1:length(anova.stats.m)){
+  test = shapiro.test(anova.stats.m[[n]]$residuals)
+  test$data.name = names(anova.stats.m)[n]
+  shapiro = cbind(shapiro, test)
+}
+
+knitr::kable(shapiro[c(1,2),], col.names = names(anova.stats.m))
+```
+
+bp2b, igf1, and igf2 have non-normal residuals.
+
+Looking at residuals for each gene.
+
+```{r, echo=F, message=F}
+
+ggplot(anova.stats.m[[2]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP2b')
+
+ggplot(anova.stats.m[[5]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('IGF1')
+
+ggplot(anova.stats.m[[6]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('IGF2')
+```
+
+bp2b definitely has a  negative skew. igf1 & 2 have a slight negative skew but look normal overall.
+
+###bp2b
+
+Log Cq and test for normality.
+```{r, message=F}
+test = filter(out_Cq, gene == 'mbp2b') %>% mutate(new_Cq = log(Cq_normalized))
+lmbp2b = lm(new_Cq~treatment, data = test)
+shapiro.test(lmbp2b$residuals)
+qqnorm(lmbp2b$residuals)
+qqline(lmbp2b$residuals)
+ggplot(lmbp2b, aes(x = .resid))+
+  geom_histogram()
+```
+
+Logging does not fix this extreme skew.  
+
+If you look back to the minimums for each gene you will see that #972 is the min for bp2b, igf1, and igf2.
+
+---
+
+Remove #972 to see if it fixes normality.
+```{r, message=F}
+test2 = filter(out_Cq, gene == 'mbp2b', Sample != 972)
+lmbp2b.new = lm(Cq_normalized~treatment, data = test2)
+shapiro.test(lmbp2b.new$residuals)
+qqnorm(lmbp2b.new$residuals)
+qqline(lmbp2b.new$residuals)
+ggplot(lmbp2b.new, aes(x = .resid))+
+  geom_histogram()
+```
+
+Better but still non-normal.
+
+---
+
+The next minimum ...
+
+```{r, message=F}
+filter(out_Cq, gene == 'mbp2b', Sample != 972) %>% arrange(., Cq_normalized) %>% head()
+```
+
+Is #73 which we already removed from the other genes due to being 3 std away from mean.
+
+Removing #73 as well.
+```{r, message=F}
+#Tested logging and removing 972 but made it more non-normal
+test3 = filter(out_Cq, gene == 'mbp2b', Sample != 73, Sample != 972) 
+lmbp2b.new1 = lm(Cq_normalized~treatment, data = test3)
+shapiro.test(lmbp2b.new1$residuals)
+qqnorm(lmbp2b.new1$residuals)
+qqline(lmbp2b.new1$residuals)
+ggplot(lmbp2b.new1, aes(x = .resid))+
+  geom_histogram()
+```
+
+Again, better but still non-normal. Thoughts?
+
+---
+
+###igf1
+
+```{r, message=F}
+test.igf1 = filter(out_Cq, gene == 'migf1') %>% mutate(new_Cq = log(Cq_normalized))
+lmigf1 = lm(new_Cq~treatment, data = test.igf1)
+shapiro.test(lmigf1$residuals)
+qqnorm(lmigf1$residuals)
+qqline(lmigf1$residuals)
+ggplot(lmigf1, aes(x = .resid))+
+  geom_histogram()
+```
+
+Does nothing.
+
+Removing #972
+```{r, message=F}
+test.igf1 = filter(out_Cq, gene == 'migf1', Sample != 972)
+lmigf1 = lm(Cq_normalized~treatment, data = test.igf1)
+shapiro.test(lmigf1$residuals)
+qqnorm(lmigf1$residuals)
+qqline(lmigf1$residuals)
+ggplot(lmigf1, aes(x = .resid))+
+  geom_histogram()
+```
+
+Removing #972 does normalize the data. 
+
+Rerun statistics
+```{r}
+anova(lmigf1)
+```
+
+
+---
+
+###igf2
+
+As logging hasn't worked, trying removing #972 first.
+```{r, message=F}
+test.igf2 = filter(out_Cq, gene == 'migf2', Sample != 972)
+lmigf2 = lm(Cq_normalized~treatment, data = test.igf2)
+shapiro.test(lmigf2$residuals)
+qqnorm(lmigf2$residuals)
+qqline(lmigf2$residuals)
+ggplot(lmigf2, aes(x = .resid))+
+  geom_histogram()
+```
+
+Works!
+
+Retun stats on normalized migf2.
+
+```{r}
+anova(lmigf2)
+```
+
+Now it is significantly different between treatments. 
+
+---
 
 ##Muscle Graphs
 
@@ -257,10 +424,10 @@ ggplot(igfs, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_
   xlab('Gene')+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
   scale_x_discrete(labels = c("IGF1","IGF2"))+
-  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  scale_fill_manual(values = c("#2F4F4F","#DCDCDC"), name = 'Treatment', labels = c('High','Low'))+
   theme_classic(base_size = 18)+
   theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'migfs-bw.jpeg', width = 5, height = 5)
+ggsave(filename = 'migfs-bw.jpeg', width = 7, height = 5)
 
 bps = Cq %>% filter(gene != 'migf1' & gene != 'migf2' & gene != 'mra' & gene != 'mrb')
 ggplot(bps, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
@@ -293,16 +460,10 @@ ggsave(filename = 'mreceps-bw.jpeg', width = 7, height = 5)
 
 ```
 
-But these numbers seem remarkably similar to be significantly different...?
-```{r, echo=F}
-knitr::kable(receps)
-```
-
-
 #Liver data
 
 ```{r, include =F}
-OLV_liver_mRNA <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/OLV_liver_mRNA.csv")
+OLV_liver_mRNA <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/Lab results/OLV_liver_mRNA.csv")
 
 liver <- OLV_liver_mRNA %>% select(PITtag,treatment,EF1a,rpl7,IGF1,IGF2,BP1a,BP1b,BP2a,BP2b,BP5a,BP5b)
 liver<-liver %>% filter(PITtag != 63 & !is.na(EF1a))#remove #63 (yellowtail) and any with no geometric mean

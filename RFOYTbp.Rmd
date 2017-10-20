@@ -279,7 +279,7 @@ bp2b definitely has a  negative skew. igf1 & 2 have a slight negative skew but l
 
 Log Cq and test for normality.
 ```{r, message=F}
-test = filter(out_Cq, gene == 'mbp2b') %>% mutate(new_Cq = log(Cq_normalized))
+test = filter(out_Cq, gene == 'mbp2b') %>% mutate(new_Cq = log(2.430655 - Cq_normalized))
 lmbp2b = lm(new_Cq~treatment, data = test)
 shapiro.test(lmbp2b$residuals)
 qqnorm(lmbp2b$residuals)
@@ -288,81 +288,54 @@ ggplot(lmbp2b, aes(x = .resid))+
   geom_histogram()
 ```
 
-Logging does not fix this extreme skew.  
-
-If you look back to the minimums for each gene you will see that #972 is the min for bp2b, igf1, and igf2.
-
----
-
-Remove #972 to see if it fixes normality.
-```{r, message=F}
-test2 = filter(out_Cq, gene == 'mbp2b', Sample != 972)
-lmbp2b.new = lm(Cq_normalized~treatment, data = test2)
-shapiro.test(lmbp2b.new$residuals)
-qqnorm(lmbp2b.new$residuals)
-qqline(lmbp2b.new$residuals)
-ggplot(lmbp2b.new, aes(x = .resid))+
-  geom_histogram()
+Rerunning stats
+```{r}
+anova(lmbp2b)
 ```
 
-Better but still non-normal.
-
----
-
-The next minimum ...
-
-```{r, message=F}
-filter(out_Cq, gene == 'mbp2b', Sample != 972) %>% arrange(., Cq_normalized) %>% head()
-```
-
-Is #73 which we already removed from the other genes due to being 3 std away from mean.
-
-Removing #73 as well.
-```{r, message=F}
-#Tested logging and removing 972 but made it more non-normal
-test3 = filter(out_Cq, gene == 'mbp2b', Sample != 73, Sample != 972) 
-lmbp2b.new1 = lm(Cq_normalized~treatment, data = test3)
-shapiro.test(lmbp2b.new1$residuals)
-qqnorm(lmbp2b.new1$residuals)
-qqline(lmbp2b.new1$residuals)
-ggplot(lmbp2b.new1, aes(x = .resid))+
-  geom_histogram()
-```
-
-Again, better but still non-normal. Thoughts?
+Still not significant.
 
 ---
 
 ###igf1
 
+Logging Cq.
 ```{r, message=F}
-test.igf1 = filter(out_Cq, gene == 'migf1') %>% mutate(new_Cq = log(Cq_normalized))
-lmigf1 = lm(new_Cq~treatment, data = test.igf1)
-shapiro.test(lmigf1$residuals)
-qqnorm(lmigf1$residuals)
-qqline(lmigf1$residuals)
-ggplot(lmigf1, aes(x = .resid))+
-  geom_histogram()
+test.igf1 = filter(out_Cq, gene == 'migf1') %>% mutate(new_Cq = log(2.399061 - Cq_normalized))
+test.log<- function(data){
+   lmgene = lm(new_Cq~treatment, data = data)
+   normality = shapiro.test(lmgene$residuals)
+   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
+   resplot = qqnorm(lmgene$residuals)
+   qqline(lmgene$residuals)
+   return(list(normality, hist))
+}
+test.log(test.igf1)
 ```
 
-Does nothing.
+Does not fix normality.
+
+---
 
 Removing #972
 ```{r, message=F}
 test.igf1 = filter(out_Cq, gene == 'migf1', Sample != 972)
-lmigf1 = lm(Cq_normalized~treatment, data = test.igf1)
-shapiro.test(lmigf1$residuals)
-qqnorm(lmigf1$residuals)
-qqline(lmigf1$residuals)
-ggplot(lmigf1, aes(x = .resid))+
-  geom_histogram()
+test.norm<- function(data){
+   lmgene = lm(Cq_normalized~treatment, data = data)
+   normality = shapiro.test(lmgene$residuals)
+   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
+   resplot = qqnorm(lmgene$residuals)
+   qqline(lmgene$residuals)
+   return(list(normality, hist))
+}
+test.norm(test.igf1)
 ```
 
-Removing #972 does normalize the data. 
+Removing #972 does normalize the data!
 
 Rerun statistics
 ```{r}
-anova(lmigf1)
+anova(lm(Cq_normalized~treatment, data = test.igf1))
 ```
 
 
@@ -370,15 +343,10 @@ anova(lmigf1)
 
 ###igf2
 
-As logging hasn't worked, trying removing #972 first.
+As residuals look similar to igf1, removing #972 first.
 ```{r, message=F}
 test.igf2 = filter(out_Cq, gene == 'migf2', Sample != 972)
-lmigf2 = lm(Cq_normalized~treatment, data = test.igf2)
-shapiro.test(lmigf2$residuals)
-qqnorm(lmigf2$residuals)
-qqline(lmigf2$residuals)
-ggplot(lmigf2, aes(x = .resid))+
-  geom_histogram()
+test.norm(test.igf2)
 ```
 
 Works!
@@ -386,7 +354,7 @@ Works!
 Retun stats on normalized migf2.
 
 ```{r}
-anova(lmigf2)
+anova(lm(Cq_normalized~treatment, data = test.igf2))
 ```
 
 Now it is significantly different between treatments. 
@@ -395,18 +363,21 @@ Now it is significantly different between treatments.
 
 ##Muscle Graphs
 
-```{r, echo=F}
+These graphs are *NOT* on normality corrected data. They do have all the recommended outliers removed.
 
+```{r, echo=F}
 #Convert mean to percent -> Set low mean per gene to 100%
 #Find overall low mean and sem
 low_mean = out_Cq %>% filter(treatment =='l')%>% group_by(gene)  %>% summarize(low_mean = mean(Cq_normalized))
 cop = copy(low_mean)
 low_mean = bind_rows(low_mean,cop) %>% arrange(gene) %>% as.list()
-Cq$low_mean = low_mean[[2]]#add to means table
-Cq = as.data.frame(Cq) %>% mutate(new_mean = mean_Cq/low_mean)#Calculate percent by dividing by low mean
-Cq = as.data.frame(Cq) %>% mutate(new_sem = sem_Cq/low_mean)#Calculate percent by dividing by  low sem
+#Find mean for graphing
+sum_Cq = out_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
+sum_Cq$low_mean = low_mean[[2]]#add to means table
+sum_Cq = as.data.frame(sum_Cq) %>% mutate(new_mean = mean_Cq/low_mean)#Calculate percent by dividing by low mean
+sum_Cq = as.data.frame(sum_Cq) %>% mutate(new_sem = sem_Cq/low_mean)#Calculate percent by dividing by  low sem
 
-ggplot(Cq, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
+ggplot(sum_Cq, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
   geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
   geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
   theme_classic(base_size = 18)
@@ -416,46 +387,49 @@ Separated graphs
 
 ```{r Separated muscle graphs, echo = F}
 #separate for easier viewing
-igfs = Cq %>% filter(gene == 'migf1' | gene == 'migf2')
+igfs = sum_Cq %>% filter(gene == 'migf1' | gene == 'migf2')
+igfs$sig = c('','*','','')
 ggplot(igfs, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
-  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.5, aes(y=new_mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
   scale_x_discrete(labels = c("IGF1","IGF2"))+
-  scale_fill_manual(values = c("#2F4F4F","#DCDCDC"), name = 'Treatment', labels = c('High','Low'))+
+  scale_fill_manual(values = c("#808080","#DCDCDC"), name = 'Treatment', labels = c('High','Low'))+
+  stat_count(aes(label = sig), geom = "text",size = 8, position=position_dodge(width = 0.6), vjust=-0.25)+
   theme_classic(base_size = 18)+
   theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'migfs-bw.jpeg', width = 7, height = 5)
 
-bps = Cq %>% filter(gene != 'migf1' & gene != 'migf2' & gene != 'mra' & gene != 'mrb')
+bps = sum_Cq %>% filter(gene != 'migf1' & gene != 'migf2' & gene != 'mra' & gene != 'mrb')
+bps$sig = ''
+bps$sig[bps$gene =='mbp5a' | bps$gene == 'mbp5b']='*'
+bps$sig[bps$treatment == 'h']=''
 ggplot(bps, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
-  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.5, aes(y=new_mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
   scale_x_discrete(labels = c("BP2a","BP2b",'BP5a','BP5b','Ra','Rb'))+
-  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  scale_fill_manual(values = c("#808080","#DCDCDC"), name = 'Treatment', labels = c('High','Low'))+
+  stat_count(aes(label = sig), geom = "text",size = 8, position=position_dodge(width = 0.6), vjust=-0.25)+
   theme_classic(base_size = 18)+
-  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+  theme(legend.position = 'none',axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'mbps-bw.jpeg', width = 7, height = 5)
 
-receps = Cq %>% filter(gene == 'mra' | gene == 'mrb')
-receps$sig = ''
-receps$sig[receps$gene =='mra' & receps$treatment == 'l']='*'
+receps = sum_Cq %>% filter(gene == 'mra' | gene == 'mrb')
 ggplot(receps, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
-  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.5, aes(y=new_mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
-  geom_text(aes(label = sig), nudge_x=.225, nudge_y = .1, size = 8)+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
   scale_x_discrete(labels = c('rA','rB'))+
-  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  scale_fill_manual(values = c("#808080","#DCDCDC"))+
   theme_classic(base_size = 18)+
-  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+  theme(axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'mreceps-bw.jpeg', width = 7, height = 5)
 
 ```
@@ -509,10 +483,10 @@ knitr::kable(refouts.l, caption = 'Reference genes')
 ```{r, echo=F}
 #Find outliers
 out_livr = adj_livr %>% group_by(gene) %>%
-  filter(Cq_normalized < 3*sd(Cq_normalized)+mean(Cq_normalized) & Cq_normalized > mean(Cq_normalized)-(3*sd(Cq_normalized)))
+  filter((Cq_normalized < (3*sd(Cq_normalized)+mean(Cq_normalized))) & (Cq_normalized > (mean(Cq_normalized)-(3*sd(Cq_normalized)))))
 
 removed = adj_livr %>% group_by(gene) %>%
-  filter(Cq_normalized > 3*sd(Cq_normalized)+mean(Cq_normalized) | Cq_normalized < mean(Cq_normalized)-(3*sd(Cq_normalized)))
+  filter((Cq_normalized > (3*sd(Cq_normalized)+mean(Cq_normalized))) | (Cq_normalized <(mean(Cq_normalized)-(3*sd(Cq_normalized)))))
 
 knitr::kable(removed, caption = 'Samples removed from std dev')
 
@@ -522,6 +496,12 @@ knitr::kable(out, caption = 'Possible outliers')
 ```
 
 Removing **#29, 50, 116, & 923** as discussed.
+
+```{r}
+ggplot(out_livr,aes(x = gene, y = Cq,color=treatment))+
+  geom_boxplot()
+```
+
 
 ##Statistics
 
@@ -533,20 +513,182 @@ Cq_liv = out_livr %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_
 
 #then run anova
 myanova<-function(i){
-  anova.genes<-anova((lm(Cq~treatment,data=out_livr,gene==i,na.action=na.omit)))
+  anova.genes<-lm(Cq_normalized~treatment,data=out_livr,gene==i,na.action=na.omit)
 }
-anova.stats.l<- sapply(unique(out_livr$gene), myanova, simplify=FALSE)
+anova.stats.l <- sapply(unique(out_livr$gene), myanova, simplify=FALSE)
 names(anova.stats.l)<-paste(unique(out_livr$gene))#rename outputs to include days
 
-knitr::kable(anova.stats.l[[1]], caption = 'IGF1')
-knitr::kable(anova.stats.l[[2]], caption = 'IGF2')
-knitr::kable(anova.stats.l[[3]], caption = 'BP1a')
-knitr::kable(anova.stats.l[[4]], caption = 'BP1b')
-knitr::kable(anova.stats.l[[5]], caption = 'BP2a')
-knitr::kable(anova.stats.l[[6]], caption = 'BP2b')
-knitr::kable(anova.stats.l[[7]], caption = 'BP5a')
-knitr::kable(anova.stats.l[[8]], caption = 'BP5b')
+knitr::kable(anova(anova.stats.l[[1]]), caption = 'IGF1')
+knitr::kable(anova(anova.stats.l[[2]]), caption = 'IGF2')
+knitr::kable(anova(anova.stats.l[[3]]), caption = 'BP1a')
+knitr::kable(anova(anova.stats.l[[4]]), caption = 'BP1b')
+knitr::kable(anova(anova.stats.l[[5]]), caption = 'BP2a')
+knitr::kable(anova(anova.stats.l[[6]]), caption = 'BP2b')
+knitr::kable(anova(anova.stats.l[[7]]), caption = 'BP5a')
+knitr::kable(anova(anova.stats.l[[8]]), caption = 'BP5b')
+```
 
+bp1a and bp1b are significant.
+
+##Test for normality
+
+Run Shapiro-Wilkes test for normality on residuals of linear model.
+```{r Liver normality, echo=F}
+#Check for normality
+
+shapiro.l <- list()
+for(n in 1:length(anova.stats.l)){
+  test = shapiro.test(anova.stats.l[[n]]$residuals)
+  test$data.name = names(anova.stats.l)[n]
+  shapiro.l = cbind(shapiro.l, test)
+}
+
+knitr::kable(shapiro.l[c(1,2),], col.names = names(anova.stats.l))
+```
+
+Seems all are non-normal except igf1.
+
+Looking at residuals for each gene.
+
+```{r, echo=F, message=F}
+ggplot(anova.stats.l[[2]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('IGF2')
+
+ggplot(anova.stats.l[[3]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP1a')
+
+ggplot(anova.stats.l[[4]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP1b')
+
+ggplot(anova.stats.l[[5]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP2a')
+
+ggplot(anova.stats.l[[6]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP2b')
+
+ggplot(anova.stats.l[[7]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP5a')
+
+ggplot(anova.stats.l[[8]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP5b')
+```
+
+They seem to be all positive skewed with obvious outliers.
+
+###igf2
+
+Logging
+```{r, message=F}
+logigf2 = filter(out_livr, gene == 'IGF2') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(logigf2)
+```
+
+Rerunning stats
+```{r}
+anova(lm(new_Cq~treatment, data = logigf2))
+```
+
+Still not significant.
+
+---
+
+###bp1a
+
+Logging.
+```{r, message=F}
+bp1al = filter(out_livr, gene == 'BP1a') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp1al)
+```
+
+Fixed!
+
+Rerunning stats
+```{r}
+anova(lm(new_Cq~treatment, data = bp1al))
+```
+
+---
+
+###bp1b
+
+Logging.
+```{r, message=F}
+bp1bl = filter(out_livr, gene == 'BP1b') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp1bl)
+```
+
+Rerunning stats.
+```{r}
+anova(lm(new_Cq~treatment, data = bp1bl))
+```
+
+---
+
+###bp2a
+
+Logging.
+```{r, message=F}
+bp2al = filter(out_livr, gene == 'BP2a') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp2al)
+```
+
+Seems bimodal. I don't think excluding outliers will help.
+
+###bp2b
+
+Logging.
+```{r, message=F}
+bp2bl = filter(out_livr, gene == 'BP2b') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp2bl)
+```
+
+Rerunning stats.
+```{r}
+anova(lm(new_Cq~treatment, data = bp2bl))
+```
+
+---
+
+###bp5a
+
+Square rooting as the skew seems moderate.
+```{r, message=F}
+bp5al = filter(out_livr, gene == 'BP5a') %>% mutate(new_Cq = sqrt(Cq_normalized))
+test.log(bp5al)
+```
+
+Rerunning stats.
+```{r}
+anova(lm(new_Cq~treatment, data = bp5al))
+```
+
+---
+
+###bp5b
+
+Logging.
+```{r, message=F}
+bp5bl = filter(out_livr, gene == 'BP5b') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp5bl)
+```
+
+Rerunning stats.
+```{r}
+anova(lm(new_Cq~treatment, data = bp5bl))
+```
+
+---
+
+##Liver Graphs
+
+```{r,echo=F}
 #Convert mean to percent -> Set total low mean to 100%
 #Find overall low mean and sem
 low_mean = out_livr %>% filter(treatment =='l')  %>% group_by(gene)%>% summarize(low_mean = mean(Cq_normalized))
@@ -560,11 +702,6 @@ ggplot(Cq_liv, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mea
   geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
   geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
   theme_classic(base_size = 18)
-```
-
-##Liver Graphs
-
-```{r,echo=F}
 #separate for easier viewing
 igfs.l = Cq_liv %>% filter(gene == 'IGF1' | gene == 'IGF2')
 ggplot(igfs.l, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+

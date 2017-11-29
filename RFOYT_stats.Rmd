@@ -39,6 +39,10 @@ RFOYTgrowth <- read.csv("~/RFOYT/RFOYT/RFOYTgrowth.csv")
 #make new dataframe to play with
 growth<-as.data.frame(RFOYTgrowth)
 
+#Export certain columns for comparison to mRNA
+justigf <- select(growth, PITtag, IGF1)
+write.csv(justigf,'igf1.csv')
+
 #reorganize data into long form
 b = tidyr::gather(growth, 'data.type','value', 5:16)
 b$mass.sl = gsub(".*\\.",'',b$data.type)#make separate data type column - mass or SL
@@ -68,15 +72,15 @@ igf1.num = dplyr::filter(b.mass, day == 0)
 igfanova = anova(lm(IGF1~treatment, data = igf1.num, na.action=na.omit))
 knitr::kable(igfanova, caption = 'Plasma IGF-1 ANOVA')
 igf1 = dplyr::filter(b, !is.na(b$IGF1) & mass.sl == 'mass' & day == '0') %>% group_by(treatment) %>% summarize(average_igf = mean(IGF1), sem_igf =  sd(IGF1)/sqrt(length(IGF1)),n=length(IGF1))
-igf1$text = c('*','')
+igf1$text = c('**','')
 ggplot(igf1, aes(x = treatment, y = average_igf))+
-  ylab('Plasma IGF1 (ng / ml)')+
+  ylab('Plasma Igf1 (ng / ml)')+
   xlab('Treatment')+
   geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
-  scale_fill_grey(start = 0.5, end = 0.9)+
-  scale_y_continuous(expand = c(0,0),limits = c(0,25))+
+  scale_fill_manual(values = c("#696969","#A9A9A9"))+  
+  coord_cartesian(ylim = c(15,25))+
   scale_x_discrete(labels = c("High","Low"))+
-  geom_errorbar(aes(ymin=average_igf - sem_igf, ymax=average_igf + sem_igf), width = 0.25)+
+  geom_errorbar(aes(ymin=average_igf - sem_igf, ymax=average_igf + sem_igf), width = 0.25, size = 1)+
   theme_classic(base_size = 18)+
   geom_text(aes(label = text),nudge_y=2, size = 8)+
   theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12))
@@ -134,7 +138,7 @@ knitr::kable(anova.stats[[4]], caption = 'Mass ANOVA Day 75')
 knitr::kable(anova.stats[[5]], caption = 'Mass ANOVA Day 91')
 knitr::kable(anova.stats[[6]], caption = 'Mass ANOVA Day 98')
 mean.mass = group_by(b.mass,day,treatment) %>% summarise(mean_mass=mean(value),sem_mass = sd(value)/sqrt(length(value)),n=length(value))
-mean.mass$sig = '*'
+mean.mass$sig = '***'
 mean.mass$sig[mean.mass$treatment=='l' | mean.mass$day == 0]=''
 #make plot for manuscript
 ggplot(mean.mass, aes(x = day, y =mean_mass, color = treatment))+
@@ -143,8 +147,8 @@ ggplot(mean.mass, aes(x = day, y =mean_mass, color = treatment))+
   geom_line()+
   ylim(c(2.5,13))+
   xlab('')+
-  geom_text(aes(label = sig),nudge_y=1, show.legend = FALSE, size= 8)+
-  scale_color_grey(start = 0.2, end = 0.6, name = 'Treatment', labels = c('High','Low'))+
+  geom_text(aes(label = sig),nudge_y=0.75, show.legend = FALSE, size= 8, color = 'black')+
+  scale_color_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration','Low ration'))+
   geom_errorbar(aes(ymin=mean_mass - sem_mass, ymax = mean_mass + sem_mass), width = 1.5) +
   scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
   theme_classic(base_size = 18)+
@@ -326,10 +330,9 @@ knitr::kable(cor.sgrmass[c(1:4,8,9),8:15])
 
 #graph whole experiment correlation
 mass.day0.98 = dplyr::filter(cor.sgr.mass, Comb == 'Day-0-98')
-ggplot(mass.day0.98, aes(x = IGF1, y = sgr.mass, color = treatment)) + 
+ggplot(mass.day0.98, aes(x = IGF1, y = sgr.mass)) + 
   geom_point(aes(fill = treatment), shape = 21, size = 2) + 
-  scale_fill_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
-  scale_color_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
+  scale_fill_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration', 'Low ration'))+
   geom_smooth(method = lm, color = 'black', se = F)+
   xlab('')+
   ylab('SGR Mass (% / day)')+
@@ -341,15 +344,15 @@ ggsave(filename = 'Fig4a.tiff', width = 7, height = 5)
 anova(lm(sgr.mass~treatment,data = dplyr::filter(dat.mass, Comb == 'Day-0-98')))
 #For manuscript
 last.sgr.mass <- dplyr::filter(dat.mass, Comb == 'Day-0-98')%>% group_by(treatment) %>% summarize(average_sgr = mean(sgr.mass), sem_sgr =  sd(sgr.mass)/sqrt(length(sgr.mass)),n=length(sgr.mass))
-last.sgr.mass$text = c('*','')
+last.sgr.mass$text = c('***','')
 ggplot(last.sgr.mass, aes(x = treatment, y = average_sgr, fill = treatment))+
-  ylab('SGR mass (% / day)')+
+  ylab('SGR Mass (% / day)')+
   xlab('')+
   geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
-  scale_fill_grey(start = 0.5, end = 0.9)+  
-  scale_y_continuous(expand = c(0,0),limits = c(0,4))+
+  scale_fill_manual(values = c("#696969","#A9A9A9"))+  
+  coord_cartesian(ylim = c(1,3))+
   scale_x_discrete(labels = c("High","Low"))+
-  geom_errorbar(aes(ymin=average_sgr - sem_sgr, ymax=average_sgr + sem_sgr), width = 0.4, size = 1)+
+  geom_errorbar(aes(ymin=average_sgr - sem_sgr, ymax=average_sgr + sem_sgr), width = 0.25, size = 1)+
   theme_classic(base_size = 18)+
   geom_text(aes(label = text),nudge_y=0.25, size = 8)+
   theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 18), axis.text.y = element_text(size = 18), plot.margin=unit(c(1,1,1.5,1.2),"cm"))
@@ -460,17 +463,17 @@ knitr::kable(anova.stats[[5]], caption = 'SL ANOVA Day 91')
 knitr::kable(anova.stats[[6]], caption = 'SL ANOVA Day 98')
 #manuscript graph
 mean.length = group_by(b.length,day,treatment) %>% summarise(mean_length=mean(value),sem_length = sd(value)/sqrt(length(value)),n=length(value))
-mean.length$sig = '*'
+mean.length$sig = '***'
 mean.length$sig[mean.length$treatment=='l' | mean.length$day == 0 | mean.length$day == 24]=''
 ggplot(mean.length, aes(x = day, y = mean_length, color = treatment))+
   geom_line()+
-  ylab('Length (mm)')+
+  ylab('Standard Length (mm)')+
   xlab('')+
   ylim(c(55,90))+
   geom_point(size = 2)+
   geom_text(aes(label = sig),nudge_y=3,size = 8, color = 'black', show.legend = FALSE)+
   geom_errorbar( aes(ymin=mean_length - sem_length, ymax = mean_length + sem_length), width = 1.5)+
-  scale_color_grey(start = 0.2, end = 0.6, name = 'Treatment', labels = c('High','Low'))+
+  scale_color_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration','Low ration'))+  
   scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
   theme_classic(base_size = 18)+
   theme(legend.position = 'none')
@@ -630,28 +633,26 @@ knitr::kable(cor.sgrsl[c(1:4,8,9),8:15])
 sl.day0.98 = dplyr::filter(cor.sgr.sl, Comb == 'Day-0-98')
 anova(lm(sgr.sl~treatment, data = sl.day0.98))
 last.sgr.sl <- sl.day0.98 %>% group_by(treatment) %>% summarize(average_sgr = mean(sgr.sl), sem_sgr =  sd(sgr.sl)/sqrt(length(sgr.sl)),n=length(sgr.sl))
-last.sgr.sl$text = c('*','')
+last.sgr.sl$text = c('***','')
 ggplot(last.sgr.sl, aes(x = treatment, y = average_sgr, fill = treatment))+
   ylab('SGR SL (% / day)')+
   xlab('Treatment')+
   geom_bar(stat = 'identity', color = 'black', aes(fill = treatment),position=position_dodge(.9))+
-  scale_fill_manual(values = c('black','grey'))+
-  scale_color_manual(values = c('black','grey'))+
-  scale_y_continuous(expand = c(0,0),limits = c(0,4))+
+  scale_fill_manual(values = c("#696969","#A9A9A9"))+  
+  coord_cartesian(ylim = c(2.5,4))+
   scale_x_discrete(labels = c("High","Low"))+
-  geom_errorbar(aes(ymin=average_sgr - sem_sgr, ymax=average_sgr + sem_sgr), width = 0.4, size = 1)+
+  geom_errorbar(aes(ymin=average_sgr - sem_sgr, ymax=average_sgr + sem_sgr), width = 0.25, size = 1)+
   theme_classic(base_size = 18)+
-  geom_text(aes(label = text),nudge_y=0.25, size = 8)+
+  geom_text(aes(label = text),nudge_y=0.15, size = 8)+
   theme(legend.position = 'none',axis.ticks.x=element_blank(),axis.text.x = element_text(size = 18), axis.text.y = element_text(size = 18), plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'Fig2b.tiff', width = 7, height = 5)
 
 #graph whole experiment correlation
-ggplot(sl.day0.98, aes(x = IGF1, y = sgr.sl, color = treatment)) + 
+ggplot(sl.day0.98, aes(x = IGF1, y = sgr.sl)) + 
   geom_point(aes(fill = treatment), shape = 21, size = 2) + 
-  scale_fill_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
-  scale_color_manual(name = 'Treatment', values = c('black','grey'), labels = c('High','Low'))+
+  scale_fill_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration', 'Low ration'))+
   geom_smooth(method = lm, color = 'black', se = F)+
-  xlab('Plasma IGF1 ( ng / mL)')+
+  xlab('Plasma Igf1 ( ng / mL)')+
   ylab('SGR SL (% / day)')+
   theme_classic(base_size = 18)+
   theme(legend.position = 'none', plot.margin=unit(c(1,1,1.5,1.2),"cm"))
@@ -749,15 +750,15 @@ knitr::kable(anova.stats[[6]], caption = 'CF ANOVA Day 98')
 
 
 mean.cf =  group_by(dat.cf,day,treatment) %>% summarise(average_cf=mean(cf),sem_cf = sd(cf)/sqrt(length(cf)),n=length(cf))
-mean.cf$sig = '*'
+mean.cf$sig = '***'
 mean.cf$sig[mean.cf$treatment=='l' | mean.cf$day == 0]=''
 ggplot(mean.cf, aes(x = day, y = average_cf, color = treatment))+
   geom_line()+
-  ylab(expression(paste('CF ( g / ',cm^3,' )')))+
+  ylab(expression(paste('Condition Factor ( g / ',cm^3,' )')))+
   xlab('Day')+
   geom_point(size = 2)+
-  geom_text(aes(label = sig),nudge_y=.05, show.legend = FALSE, size = 8)+
-  scale_color_grey(start = 0.2, end = 0.6, name = 'Treatment', labels = c('High','Low'))+
+  geom_text(aes(label = sig),nudge_y=.05, show.legend = FALSE, size = 8, color = 'black')+
+  scale_color_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration','Low ration'))+ 
   geom_errorbar(aes(ymin=average_cf - sem_cf, ymax = average_cf + sem_cf), width = 1.5) +
   scale_x_continuous(expand = c(0,0),limits = c(-10,108),breaks = c(0,24,48,75,91,98))+ 
   theme_classic(base_size = 18)+

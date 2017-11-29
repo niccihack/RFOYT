@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r, echo=F, include=F}
-packages <- c('readxl','tidyverse','readr','data.table','dplyr','car','ggplot2','nortest','broom')
+packages <- c('readxl','tidyverse','readr','data.table','dplyr','car','ggplot2','nortest','broom','ggsignif')
 lapply(packages, require, character.only = T)
 ```
 
@@ -71,17 +71,19 @@ dat_test = rbind(mbp2a, mbp2b,
                  mef1a, 
                  migf1, migf2,
                  mra, mrb, mrpl17) %>%
-  select(Sample, Cq, gene) 
+  select(Sample, SQMean, gene) 
 
 #Remove NAs
-dat_test = filter(dat_test,!is.na(Sample))
+dat_test = filter(dat_test,!is.na(Sample) & SQMean != 0)
 
 
 dat_test2 = dat_test %>%
   group_by(gene, Sample) %>%
-  summarize(n = length(Cq), Cq = mean(Cq))
+  summarize(n = length(SQMean), Cq = mean(SQMean))
 
-
+#output for Sean
+mdata <- tidyr::spread(dat_test2,gene,Cq)
+write.csv(mdata,'RFOLV-muscle.csv')
 ```
 
 #Muscle data
@@ -144,43 +146,46 @@ knitr::kable(refouts, caption = "Reference genes")
 
 ```
 
-Perhaps samples **113, 73, 54, & 44** should be removed?
+Perhaps samples **113, 956, & 44** should be removed?
 
 ```{r, echo=F}
-
-#Find outliers
-out_Cq = adj_Cq %>% group_by(gene) %>%
-  filter(Cq_normalized < (3*sd(Cq_normalized)+mean(Cq_normalized)) & Cq_normalized >( mean(Cq_normalized)-(3*sd(Cq_normalized))))
-
-mremoved = adj_Cq %>% group_by(gene) %>%
-  filter(Cq_normalized < (mean(Cq_normalized)-(3*sd(Cq_normalized))) |  Cq_normalized > (3*sd(Cq_normalized)+mean(Cq_normalized)))
-```
-
-Samples **#54  and 73** were removed due to over/under 3 std
-```{r, echo=F}
-
-knitr::kable(mremoved, caption = 'Samples removed from statistics')
-
-out = out_Cq %>% group_by(gene,treatment) %>% summarize(max = max(Cq_normalized),min = min(Cq_normalized), max_sample = Sample[which(Cq_normalized == max)], min_sample = Sample[which(Cq_normalized == min)]) %>% arrange(min_sample)
-```
-
-Maximums and minimums of whole dataset after removing previous outliers.
-
-```{r, echo=F}
+out = adj_Cq %>% group_by(gene,treatment) %>% summarize(max = max(Cq_normalized),min = min(Cq_normalized), max_sample = Sample[which(Cq_normalized == max)], min_sample = Sample[which(Cq_normalized == min)]) %>% arrange(min_sample)
 
 knitr::kable(out,caption = 'Possible outliers of whole dataset')
 ```
 
 
-Possibly remove **#113, 38, & 44**.
+**#972 & 103** for bp2b removed.
+
+```{r}
+adj_Cq <- adj_Cq %>% filter(!(gene == 'mbp2b' & (Sample == 103 | Sample == 972)))
+#Find outliers
+out_Cq = adj_Cq %>% group_by(gene) %>%
+  filter(Cq_normalized < ((3*sd(Cq_normalized))+mean(Cq_normalized)) & Cq_normalized >( mean(Cq_normalized)-(3*sd(Cq_normalized))))
+
+mremoved = adj_Cq %>% group_by(gene) %>%
+  filter(Cq_normalized < (mean(Cq_normalized)-(3*sd(Cq_normalized))) |  Cq_normalized > ((3*sd(Cq_normalized))+mean(Cq_normalized)))
+```
+
+```{r, echo=F}
+
+knitr::kable(mremoved, caption = 'Samples removed from statistics')
+```
+
+Removing **113 & 956**.
+
+```{r}
+out_Cq <- filter(out_Cq, Sample != 956 & Sample != 113) 
+
+ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
+  geom_boxplot()
+```
+
 
 ---
 
-Graph of data with only **#73 and 54** removed.
 
 ```{r, echo=F}
-ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
-  geom_boxplot()
 #then run anova
 myanova<-function(i){
   anova.genes<-lm(Cq_normalized~treatment,data=out_Cq,gene==i,na.action=na.omit)
@@ -203,40 +208,10 @@ knitr::kable(anova(anova.stats.m[[7]]), caption = 'Recepter A')
 knitr::kable(anova(anova.stats.m[[8]]), caption = 'Recepter B')
 ```
 
-bp5b and igf1 are significant.
+bp5a, bp5b and igf1 are significant.
 
 ---
 
-Now removing recommended **#113, 44, & 38**.
-```{r, echo=F}
-out_Cq = out_Cq %>% filter(Sample!=113 & Sample!=38 & Sample!=44)
-```
-
-Rerun graphs and stats.
-
-```{r, echo=F}
-
-ggplot(out_Cq, aes(y = Cq_normalized, x = gene, color = treatment))+
-  geom_boxplot()
-#then run anova
-myanova<-function(i){
-  anova.genes<-lm(Cq_normalized~treatment,data=out_Cq,gene==i,na.action=na.omit)
-}
-anova.stats.m<- sapply(unique(out_Cq$gene), myanova, simplify=FALSE)
-names(anova.stats.m)<-paste(unique(out_Cq$gene))#rename outputs to include days
-
-knitr::kable(anova(anova.stats.m[[1]]), caption = 'BP2a')
-knitr::kable(anova(anova.stats.m[[2]]), caption = 'BP2b')
-knitr::kable(anova(anova.stats.m[[3]]), caption = 'BP5a')
-knitr::kable(anova(anova.stats.m[[4]]), caption = 'BP5b')
-knitr::kable(anova(anova.stats.m[[5]]), caption = 'IGF1')
-knitr::kable(anova(anova.stats.m[[6]]), caption = 'IGF2')
-knitr::kable(anova(anova.stats.m[[7]]), caption = 'Recepter A')
-knitr::kable(anova(anova.stats.m[[8]]), caption = 'Recepter B')
-
-```
-
-bp5a now also significant.
 
 ##Test for normality
 
@@ -254,11 +229,14 @@ for(n in 1:length(anova.stats.m)){
 knitr::kable(shapiro[c(1,2),], col.names = names(anova.stats.m))
 ```
 
-bp2b, igf1, and igf2 have non-normal residuals.
+bp2a, bp2b, igf1, and igf2 have non-normal residuals.
 
 Looking at residuals for each gene.
 
 ```{r, echo=F, message=F}
+ggplot(anova.stats.m[[1]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP2a')
 
 ggplot(anova.stats.m[[2]], aes(x = .resid))+
   geom_histogram()+
@@ -273,69 +251,62 @@ ggplot(anova.stats.m[[6]], aes(x = .resid))+
   ggtitle('IGF2')
 ```
 
-bp2b definitely has a  negative skew. igf1 & 2 have a slight negative skew but look normal overall.
+bp2b definitely has a positive skew. igf1 & 2 & bp2a have a slight positive skew but look normal overall.
 
-###bp2b
+---
 
-Log Cq and test for normality.
+###bp2a
+
+Sqrt Cq and test for normality.
+
 ```{r, message=F}
-test = filter(out_Cq, gene == 'mbp2b') %>% mutate(new_Cq = log(2.430655 - Cq_normalized))
-lmbp2b = lm(new_Cq~treatment, data = test)
-shapiro.test(lmbp2b$residuals)
-qqnorm(lmbp2b$residuals)
-qqline(lmbp2b$residuals)
-ggplot(lmbp2b, aes(x = .resid))+
-  geom_histogram()
+bp2a = filter(out_Cq, gene == 'mbp2a') %>% mutate(new_Cq = sqrt(Cq_normalized))
+test.log<- function(data){
+   lmgene = lm(new_Cq~treatment, data = data)
+   normality = shapiro.test(lmgene$residuals)
+   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
+   return(list(normality, hist))
+}
+test.log(bp2a)
 ```
 
 Rerunning stats
 ```{r}
-anova(lmbp2b)
+anova(lm(new_Cq~treatment, data = bp2a))
 ```
 
-Still not significant.
+
+---
+
+###bp2b
+
+Log Cq and test for normality.
+
+```{r, message=F}
+bp2b = filter(out_Cq, gene == 'mbp2b') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp2b)
+```
+
+Rerunning stats
+```{r}
+anova(lm(new_Cq~treatment, data = bp2b))
+```
+
 
 ---
 
 ###igf1
 
-Logging Cq.
+Sqrt Cq.
+
 ```{r, message=F}
-test.igf1 = filter(out_Cq, gene == 'migf1') %>% mutate(new_Cq = log(2.399061 - Cq_normalized))
-test.log<- function(data){
-   lmgene = lm(new_Cq~treatment, data = data)
-   normality = shapiro.test(lmgene$residuals)
-   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
-   resplot = qqnorm(lmgene$residuals)
-   qqline(lmgene$residuals)
-   return(list(normality, hist))
-}
+test.igf1 = filter(out_Cq, gene == 'migf1') %>% mutate(new_Cq = sqrt(Cq_normalized))
 test.log(test.igf1)
 ```
 
-Does not fix normality.
-
----
-
-Removing #972
-```{r, message=F}
-test.igf1 = filter(out_Cq, gene == 'migf1', Sample != 972)
-test.norm<- function(data){
-   lmgene = lm(Cq_normalized~treatment, data = data)
-   normality = shapiro.test(lmgene$residuals)
-   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
-   resplot = qqnorm(lmgene$residuals)
-   qqline(lmgene$residuals)
-   return(list(normality, hist))
-}
-test.norm(test.igf1)
-```
-
-Removing #972 does normalize the data!
-
-Rerun statistics
+Rerunning stats
 ```{r}
-anova(lm(Cq_normalized~treatment, data = test.igf1))
+anova(lm(new_Cq~treatment, data = test.igf1))
 ```
 
 
@@ -343,13 +314,13 @@ anova(lm(Cq_normalized~treatment, data = test.igf1))
 
 ###igf2
 
-As residuals look similar to igf1, removing #972 first.
+Log Cq.
+
 ```{r, message=F}
-test.igf2 = filter(out_Cq, gene == 'migf2', Sample != 972)
-test.norm(test.igf2)
+test.igf2 = filter(out_Cq, gene == 'migf2') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(test.igf2)
 ```
 
-Works!
 
 Retun stats on normalized migf2.
 
@@ -357,7 +328,6 @@ Retun stats on normalized migf2.
 anova(lm(Cq_normalized~treatment, data = test.igf2))
 ```
 
-Now it is significantly different between treatments. 
 
 ---
 
@@ -375,7 +345,7 @@ low_mean = bind_rows(low_mean,cop) %>% arrange(gene) %>% as.list()
 sum_Cq = out_Cq %>% group_by(gene, treatment) %>% summarize(mean_Cq = mean(Cq_normalized), sem_Cq =  sd(Cq_normalized)/sqrt(length(Cq_normalized)),n=length(Cq_normalized))
 sum_Cq$low_mean = low_mean[[2]]#add to means table
 sum_Cq = as.data.frame(sum_Cq) %>% mutate(new_mean = mean_Cq/low_mean)#Calculate percent by dividing by low mean
-sum_Cq = as.data.frame(sum_Cq) %>% mutate(new_sem = sem_Cq/low_mean)#Calculate percent by dividing by  low sem
+sum_Cq = as.data.frame(sum_Cq) %>% mutate(new_sem = sem_Cq/low_mean) %>% arrange(desc(treatment))#Calculate percent by dividing by  low sem
 
 ggplot(sum_Cq, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
   geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
@@ -388,51 +358,108 @@ Separated graphs
 ```{r Separated muscle graphs, echo = F}
 #separate for easier viewing
 igfs = sum_Cq %>% filter(gene == 'migf1' | gene == 'migf2')
-igfs$sig = c('','*','','')
-ggplot(igfs, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black',width = 0.5, aes(y=new_mean),position=position_dodge(width = 0.6))+
+ggplot(igfs, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = forcats::fct_rev(treatment)))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=new_mean),position=position_dodge(width = 0.6))+
   geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
-  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
-  scale_x_discrete(labels = c("IGF1","IGF2"))+
-  scale_fill_manual(values = c("#808080","#DCDCDC"), name = 'Treatment', labels = c('High','Low'))+
-  stat_count(aes(label = sig), geom = "text",size = 8, position=position_dodge(width = 0.6), vjust=-0.25)+
+  coord_cartesian(ylim = c(0.5,2.5))+
+  scale_x_discrete(labels = c("igf1","igf2"))+
+  scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('Low ration','High ration'))+
+  geom_signif(aes(y = new_mean), y_position=2.4, xmin=0.7, xmax=1.3,annotation="***", tip_length=0, textsize = 6) +
   theme_classic(base_size = 18)+
-  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'migfs-bw.jpeg', width = 7, height = 5)
+  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"), legend.position = c(0.8,0.85))
+ggsave(filename = 'Fig7a.tiff', width = 7, height = 5)
 
 bps = sum_Cq %>% filter(gene != 'migf1' & gene != 'migf2' & gene != 'mra' & gene != 'mrb')
-bps$sig = ''
-bps$sig[bps$gene =='mbp5a' | bps$gene == 'mbp5b']='*'
-bps$sig[bps$treatment == 'h']=''
-ggplot(bps, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black',width = 0.5, aes(y=new_mean),position=position_dodge(width = 0.6))+
+ggplot(bps, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem,  fill = forcats::fct_rev(treatment)))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=new_mean),position=position_dodge(width = 0.6))+
   geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
-  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
-  scale_x_discrete(labels = c("BP2a","BP2b",'BP5a','BP5b','Ra','Rb'))+
-  scale_fill_manual(values = c("#808080","#DCDCDC"), name = 'Treatment', labels = c('High','Low'))+
-  stat_count(aes(label = sig), geom = "text",size = 8, position=position_dodge(width = 0.6), vjust=-0.25)+
+  scale_y_continuous(expand = c(0,0),limits = c(0,1.7))+
+  scale_x_discrete(labels = c("bp2a","bp2b",'bp5a','bp5b'))+
+  scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('High','Low'))+
+  geom_signif(aes(y = new_mean), y_position=c(1.5,1.5), xmin=c(2.7, 3.7), xmax=c(3.2, 4.2),annotation=c("*", "**"), tip_length=0, textsize = 6) +
   theme_classic(base_size = 18)+
-  theme(legend.position = 'none',axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'mbps-bw.jpeg', width = 7, height = 5)
+  theme(axis.text.x = element_text(face = "italic"), legend.position = 'none',axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig7b.tiff', width = 7, height = 5)
 
 receps = sum_Cq %>% filter(gene == 'mra' | gene == 'mrb')
-ggplot(receps, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black',width = 0.5, aes(y=new_mean),position=position_dodge(width = 0.6))+
+ggplot(receps, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = forcats::fct_rev(treatment)))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=new_mean),position=position_dodge(width = 0.6))+
   geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
-  scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
-  scale_x_discrete(labels = c('rA','rB'))+
-  scale_fill_manual(values = c("#808080","#DCDCDC"))+
+  coord_cartesian(ylim = c(0.75,1.2))+
+  scale_x_discrete(labels = c('igf1ra','igf1rb'))+
+  scale_fill_manual(values = c("#A9A9A9","#696969"))+
   theme_classic(base_size = 18)+
-  theme(axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'mreceps-bw.jpeg', width = 7, height = 5)
+  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig7c.tiff', width = 7, height = 5)
 
 ```
+
+Plasma and mRNA igf1 correlation
+
+```{r}
+pigf <- read_csv("igf1.csv")[,2:3]#pulled plasma igf1 from growth data
+migf <- filter(out_Cq, gene == 'migf1')#only want to look at correlation to liver igf1
+cmigf1 <- inner_join(migf, pigf, by = c('Sample'='PITtag'))
+cmigf1 <- filter(cmigf1, !is.na(IGF1))
+
+cor.test(cmigf1$IGF1,cmigf1$Cq_normalized,method='pearson')
+
+ggplot(cmigf1, aes(x = IGF1, y = Cq_normalized)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration', 'Low ration'))+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('Plasma Igf1')+
+  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.2,0.8))
+ggsave(filename = 'FigS2a.tiff', width = 7, height = 5)
+```
+
+High treatment
+
+```{r}
+cmigf1.h <- filter(cmigf1, treatment == 'h')
+
+cor.test(cmigf1.h$IGF1, cmigf1.h$Cq_normalized, method = 'pearson')
+
+ggplot(cmigf1.h, aes(x = IGF1, y = Cq_normalized)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(values = "#696969")+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('')+
+  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
+ggsave(filename = 'FigS2b.tiff', width = 7, height = 5)
+```
+
+Low treatment
+
+```{r}
+cmigf1.l <- filter(cmigf1, treatment == 'l')
+
+cor.test(cmigf1.l$IGF1, cmigf1.l$Cq_normalized, method = 'pearson')
+
+ggplot(cmigf1.l, aes(x = IGF1, y = Cq_normalized)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(values = "#A9A9A9")+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('Plasma Igf1')+
+  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  #xlim(10,30)+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
+ggsave(filename = 'FigS2c.tiff', width = 7, height = 5)
+```
+
+
+---
 
 #Liver data
 
@@ -584,7 +611,8 @@ They seem to be all positive skewed with obvious outliers.
 
 ###igf2
 
-Logging
+Logging.
+
 ```{r, message=F}
 logigf2 = filter(out_livr, gene == 'IGF2') %>% mutate(new_Cq = log(Cq_normalized))
 test.log(logigf2)
@@ -602,6 +630,7 @@ Still not significant.
 ###bp1a
 
 Logging.
+
 ```{r, message=F}
 bp1al = filter(out_livr, gene == 'BP1a') %>% mutate(new_Cq = log(Cq_normalized))
 test.log(bp1al)
@@ -619,6 +648,7 @@ anova(lm(new_Cq~treatment, data = bp1al))
 ###bp1b
 
 Logging.
+
 ```{r, message=F}
 bp1bl = filter(out_livr, gene == 'BP1b') %>% mutate(new_Cq = log(Cq_normalized))
 test.log(bp1bl)
@@ -634,6 +664,7 @@ anova(lm(new_Cq~treatment, data = bp1bl))
 ###bp2a
 
 Logging.
+
 ```{r, message=F}
 bp2al = filter(out_livr, gene == 'BP2a') %>% mutate(new_Cq = log(Cq_normalized))
 test.log(bp2al)
@@ -641,9 +672,12 @@ test.log(bp2al)
 
 Seems bimodal. I don't think excluding outliers will help.
 
+---
+
 ###bp2b
 
 Logging.
+
 ```{r, message=F}
 bp2bl = filter(out_livr, gene == 'BP2b') %>% mutate(new_Cq = log(Cq_normalized))
 test.log(bp2bl)
@@ -659,6 +693,7 @@ anova(lm(new_Cq~treatment, data = bp2bl))
 ###bp5a
 
 Square rooting as the skew seems moderate.
+
 ```{r, message=F}
 bp5al = filter(out_livr, gene == 'BP5a') %>% mutate(new_Cq = sqrt(Cq_normalized))
 test.log(bp5al)
@@ -674,6 +709,7 @@ anova(lm(new_Cq~treatment, data = bp5al))
 ###bp5b
 
 Logging.
+
 ```{r, message=F}
 bp5bl = filter(out_livr, gene == 'BP5b') %>% mutate(new_Cq = log(Cq_normalized))
 test.log(bp5bl)
@@ -704,45 +740,89 @@ ggplot(Cq_liv, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mea
   theme_classic(base_size = 18)
 #separate for easier viewing
 igfs.l = Cq_liv %>% filter(gene == 'IGF1' | gene == 'IGF2')
-ggplot(igfs.l, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
-  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
+ggplot(igfs.l, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = forcats::fct_rev(treatment)))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=new_mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
+  ylab('Relative mRNA level')+
+  xlab('Gene')+
+  coord_cartesian(ylim = c(0.75,1.2))+
+  scale_x_discrete(labels = c("igf1","igf2"))+
+  scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('Low ration','High ration'))+
+  theme_classic(base_size = 18)+
+  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig5a.tiff', width = 7, height = 5)
+
+bps.liv = Cq_liv %>% filter(gene != 'IGF1' & gene != 'IGF2')
+ggplot(bps.liv, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = forcats::fct_rev(treatment)))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=new_mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
-  scale_x_discrete(labels = c("IGF1","IGF2"))+
-  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
+  scale_x_discrete(labels = c("bp1a","bp1b",'bp2a','bp2b','bp5a','bp5b'))+
+  scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('Low','High'))+
+  geom_signif(aes(y = new_mean), y_position=c(1.4,1.3), xmin=c(0.7,1.7), xmax=c(1.3,2.3),annotation=c("**","***"), tip_length=0, textsize = 6) +
   theme_classic(base_size = 18)+
-  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'Ligfs-color.jpeg', width = 5, height = 5)
-
-bps.liv = Cq_liv %>% filter(gene != 'IGF1' & gene != 'IGF2')
-bps.liv = add_column(bps.liv, sig = '*')
-bps.liv$sig[bps.liv$gene =='BP5a' | bps.liv$gene == 'BP5b']=''
-bps.liv$sig[bps.liv$treatment != 'l']=''
-ggplot(bps.liv, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mean + new_sem, fill = treatment))+
-  geom_bar(stat = 'identity', color = 'black', aes(y=new_mean),position=position_dodge())+
-  geom_errorbar(width = 0.25, position=position_dodge(width=0.9))+
-  ylab('Relative mRNA level')+
-  xlab('Gene')+
-  scale_y_continuous(expand = c(0,0),limits = c(0,2))+
-  scale_x_discrete(labels = c("BP1a","BP1b",'BP2a','BP2b','BP5a','BP5b'))+
-  geom_text(aes(label = sig),size = 8, nudge_y = 0.5)+
-  scale_fill_grey(start = 0.5, end = 0.9, name = 'Treatment', labels = c('High','Low'))+
-  theme_classic(base_size = 18)+
-  theme(axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'lbps-color.jpeg', width = 7, height = 5)
+  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Fig5b.tiff', width = 7, height = 5)
 ```
 
+Plasma IGF1 and mRNA (#56 removed)
 
+```{r}
+pigf <- read_csv("igf1.csv")[,2:3]#pulled plasma igf1 from growth data
+ligf <- filter(out_livr, gene == 'IGF1')#only want to look at correlation to liver igf1
+cigf1 <- inner_join(ligf, pigf, by = 'PITtag')
+cigf1 <- filter(cigf1, !is.na(IGF1) & PITtag != '56')
 
+cor.test(cigf1$IGF1,cigf1$Cq_normalized,method='pearson')
 
+ggplot(cigf1, aes(x = IGF1, y = Cq_normalized)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration', 'Low ration'))+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('Plasma Igf1')+
+  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+ggsave(filename = 'Fig6.tiff', width = 7, height = 5)
+```
 
+High treatment
 
+```{r}
+cigf1.h <- filter(cigf1, treatment == 'h')
 
+cor.test(cigf1.h$IGF1, cigf1.h$Cq_normalized, method = 'pearson')
 
+ggplot(cigf1.h, aes(x = IGF1, y = Cq_normalized)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(values = "#696969")+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('')+
+  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
+ggsave(filename = 'FigS1a.tiff', width = 7, height = 5)
+```
 
+Low treatment
 
+```{r}
+cigf1.l <- filter(cigf1, treatment == 'l')
 
+cor.test(cigf1.l$IGF1, cigf1.l$Cq_normalized, method = 'pearson')
+
+ggplot(cigf1.l, aes(x = IGF1, y = Cq_normalized)) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  scale_fill_manual(values = "#A9A9A9")+
+  geom_smooth(method = lm, color = 'black', se = F)+
+  xlab('Plasma Igf1')+
+  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  xlim(10,30)+
+  theme_classic(base_size = 18)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
+ggsave(filename = 'FigS1b.tiff', width = 7, height = 5)
+```
 
 

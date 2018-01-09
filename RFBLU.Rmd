@@ -1,0 +1,803 @@
+---
+title: "RFBLU-CCFRP"
+author: "Nicole Hack"
+date: "October 29, 2017"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+#Started 1 Feb 2017
+knitr::opts_chunk$set(echo = F, message = F, warning = F)
+```
+```{r, echo=F, include=F}
+packages <- c('readxl','tidyverse','readr','data.table','dplyr','car','ggplot2','ggmap','nortest','broom','lme4')
+lapply(packages, require, character.only = T)
+```
+```{r Data}
+#Load my data
+Fishing_data <- read_csv("C:/Users/manic/Dropbox/iRock/CCFRP blood samples/Fishing data.txt")
+#load CCFRP data
+Hack_Sample_Data <- read_csv("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/Field Results/CCFRP_Final_Hacked.csv")
+
+
+#####Formatting my data#####
+#adjust my data to match CCFRP
+#because cell is coded as site.cell without a deliminiter, I have to recreate this in my data
+ahackdat<-Fishing_data#adjusted Fishing data
+ahackdat["SiteCell"]<-ifelse(ahackdat$Location=='PBL',paste('BL'),paste('PB'))
+#adding zeros to single cell numbers
+ahackdat['ncell']<-ifelse(nchar(ahackdat$Cell)==1,
+                       c(paste0('0',ahackdat$Cell)),
+                       ahackdat$Cell
+                       )
+
+ahackdat['sicell']<-paste(ahackdat$SiteCell,ahackdat$ncell, sep='')
+#date column registered as date by R
+ahackdat$Date<-as.Date(ahackdat$Date,format="%m/%d/%Y")
+#reorder to merge in correct order to match CCFRP data
+ahackdat<-ahackdat[,c('Date','Location','Protection','sicell','Drift','Species','Length','TagNum','Bloodsamp')]
+
+
+
+#####Formatting CCFRP data#####
+#change species codes to match my data
+##will need to add more once I get all the data!
+fccfrp<-Hack_Sample_Data#fixed CCFRP data
+fccfrp$Species<-car::recode(fccfrp$SpeciesCode,"
+  'BLA'='RFBLK';
+  'BLU'='RFBLU';
+  'CPR'='RFCOP';
+  'GPR'='RFGOP';
+  'KLP'='RFKLP';
+  'LCD'='LNGCD';
+  'OLV'='RFOLV';
+  'VER'='RFVER';
+  'CBZ'='SCCAB';
+  'DEA'='RFDEC';
+  'YTL'='RFYTL'
+")
+#change area code to match my location code
+fccfrp$Area<-car::recode(fccfrp$Area,"
+    'BL'='PBL';
+    'PB'='PBN'
+")
+#fix to date function
+#combine to get MM/DD/YYYY format
+fccfrp$Date<-paste(paste(fccfrp$Month,fccfrp$Day,fccfrp$Year, sep='/'),sep='')
+fccfrp$Date<-as.Date(fccfrp$Date,format="%B/%d/%Y")
+#change tagID to not be a character with a fucking letter 'O' at the end
+fccfrp$TagID<-as.numeric(substr(fccfrp$TagID,1,nchar(fccfrp$TagID)-1))
+#reorder columns to combime in proper order
+fccfrp <- select(fccfrp,'Date','Area','Site','CellID','Drift','Species','Length','TagID',c(11:29))
+
+
+#only have igf concentration for blue rockfish so subseting those
+igf_data <- read_excel("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/Field Results/RockFish_Hack_2016_stanIGF_022417brb (1).xlsx")
+
+igf_data$sample = igf_data$`Phys Number`
+igf_data$`Phys Number`=NULL
+igf1 = igf_data %>% 
+  filter(igf_data[,1]!=116) %>% #remove duplicated bloodsample #277
+  dplyr::select(sample,stanIGF)#only want samplenum and igf conc.
+ahackdat$Bloodsamp = as.numeric(ahackdat$Bloodsamp)
+samphackdat= right_join(ahackdat, igf1, by = c('Bloodsamp' = 'sample'))
+```
+
+#Data summary
+
+278 Total bloodsamples with Igf concentrations
+
+```{r}
+#subset those with tags
+tagcc<-subset(fccfrp,!is.na(TagID))
+#subset those with tag#s
+tagnh<-filter(samphackdat,!is.na(TagNum))
+#combine
+mtfish <- inner_join(tagcc, tagnh, by = c('TagID' = 'TagNum'))
+#only one tagged blue, not found in ccfrp data
+```
+```{r}
+#merge columns in CCFRP data in order to combine with my data
+fccfrp = unite(fccfrp,id,  1:7, sep = ' ')
+fccfrp = fccfrp[!duplicated(fccfrp),]#remove duplicates
+#Although there may be slightly different data between duplicated, the id ensures that the variance is restrained to a maximum of 45 min (total time fishing in cell) and a distance of 500 m (total length of cell)
+
+#merge columns in my data to combine with ccfrp data
+samphackdat = unite(samphackdat,id,  1:7, sep = ' ', remove = F)
+#unite!
+mdat = inner_join(samphackdat, fccfrp, by = 'id')
+
+#Many not matched due to differing length inputs
+#First round of unmatched data
+hackdat1 = anti_join(samphackdat,mdat, by = 'id')
+#If there is no start time then increase the length by one, replace id, and rejoin data
+misdat = hackdat1 %>% 
+  mutate(len = Length+1) %>%
+  unite(idp1,c(2:7,12), sep = ' ', remove = F) %>% 
+  inner_join(fccfrp, by= c('idp1'='id'))
+
+#Still some missing
+hackdat2 = anti_join(hackdat1,misdat,by= 'id')
+mdat2 = hackdat2 %>%
+  mutate(len = Length-1) %>%
+  unite(idp2,c(2:7,12), sep = ' ', remove = F) %>% 
+  inner_join(fccfrp, by= c('idp2'='id'))
+
+#Ones still missing
+lost = anti_join(hackdat2,mdat2,by = 'id')
+#See if any match without a drift number
+dccfrp = fccfrp %>% separate(id,c('Date','Location','Protection','sicell','Drift','species','length'),sep = ' ') %>% unite(idd,c(1:4,6,7), sep = ' ')#make new id for ccfrp without drift num
+#make new id for my data
+lost = lost %>% unite(idd,c(2:5,7,8), sep = ' ', remove = F) 
+#match
+lostdat = dplyr::inner_join(lost,dccfrp, by = 'idd') 
+#created duplicates due to multiple entries in dccfrp
+lostdat = lostdat[!duplicated(lostdat$Bloodsamp),]
+#Still some missing
+#No drift, length-1
+hackdat3 = anti_join(lost,lostdat,by = 'Bloodsamp')
+lostdat2 = hackdat3 %>%
+  mutate(len = Length-1) %>%
+  unite(idp2,c(3:6,8,13), sep = ' ', remove = F) %>% 
+  inner_join(dccfrp, by= c('idp2'='idd'))
+lostdat2 = lostdat2[!duplicated(lostdat2$Bloodsamp),]
+
+#No drift, length+1
+hackdat4 = anti_join(hackdat3,lostdat2, by = 'Bloodsamp')
+lostdat3 = hackdat4 %>%
+  mutate(len = Length+1) %>%
+  unite(idp2,c(3:6,8,13), sep = ' ', remove = F) %>% 
+  inner_join(dccfrp, by= c('idp2'='idd'))
+
+#Use ID information for the rest of the unmatched data
+
+#merge all matched data
+#need all columns to match
+misdat = misdat[,c(2:8,10:33)] %>% dplyr::rename(Length = len, id = idp1)
+mdat2 = mdat2[,c(2:8,10:33)] %>% dplyr::rename(Length = len, id = idp2)
+lostdat = lostdat[,c(3:6,13,8:12,14:33)] %>%
+  unite(id,c(1:7), sep = ' ', remove = F) %>% 
+  dplyr::rename(Drift = Drift.y)
+lostdat$Drift = as.numeric(lostdat$Drift)
+lostdat2 = lostdat2[,c(4:7,15,9,14,11:13,16:35)]%>%
+  unite(id,c(1:7), sep = ' ', remove = F) %>% 
+  dplyr::rename(Drift = Drift.y, Length = len)
+lostdat2$Drift = as.numeric(lostdat2$Drift)
+lostdat3 = lostdat3[,c(4:7,15,9,14,11:13,16:35)]%>%
+  unite(id,c(1:7), sep = ' ', remove = F) %>% 
+  dplyr::rename(Drift = Drift.y, Length = len)
+lostdat3$Drift = as.numeric(lostdat3$Drift)
+matched = dplyr::bind_rows(mdat,misdat,mdat2,lostdat,lostdat2,lostdat3)
+```
+
+265 samples matched to CCFRP data
+
+##Check for outliers and normality
+```{r}
+
+#find outliers
+igfremoved = matched %>% group_by(Location,Protection) %>%
+  filter((stanIGF < (mean(stanIGF)-(3*sd(stanIGF)))) |  (stanIGF > (3*sd(stanIGF)+mean(stanIGF))))
+
+knitr::kable(igfremoved[,c(1,10:11)], caption = 'Outliers removed')
+
+#Removing #124 due to outlier
+matched <- filter(matched, Bloodsamp != 124)
+igf.lm <- lm(stanIGF~factor(Length), data = matched)
+shapiro.test(igf.lm$residuals)
+#ggplot(igf.lm, aes(x = .resid))+
+  #geom_histogram()
+```
+
+Square root transforming data to normalize
+
+```{r}
+#removing nas
+matched <- filter(matched, !is.na(stanIGF))
+matched <- mutate(matched, igf = sqrt(stanIGF))
+new.lm = lm(igf~factor(Length), data = matched)
+shapiro.test(new.lm$residuals)
+```
+
+#Models
+
+```{r}
+library(GGally)
+subdat <- matched[,c(2:4,8,11)]
+#ggpairs(subdat,aes(color = Protection))
+```
+
+```{r, include = F}
+#ANOVAs
+matched$cDate = as.character(matched$Date)
+
+#testing only location and protection
+dat_lm = lm(igf~Location+Protection, data = matched)
+summary(dat_lm)
+anova(dat_lm)
+library(agricolae)
+tukey = HSD.test(dat_lm,c('Protection','Location'))
+knitr::kable(tukey$groups,caption = 'Post-hoc Tukey HSD test')
+
+dat_lmer_int = lm(igf~Location*Protection+(Length), data = matched)
+summary(dat_lmer_int)
+```
+
+```{r, include = F}
+#Location and protection nested in date
+dat_sim = lm(igf~Date/(Location*Protection)+Length, data = matched)
+summary(dat_sim)
+anova(dat_sim)
+```
+
+Igf vs length
+
+```{r}
+dat_len = lm(igf~Length, data = matched)
+summary(dat_len)
+```
+
+Igf vs length+protection
+
+```{r}
+dat_lenpro = lm(igf~Length+Protection, data=matched)
+anova(dat_lenpro)
+```
+
+```{r}
+ggplot(matched, aes(y = stanIGF, x = Length)) + 
+  geom_point(aes(fill = Protection), shape = 21, color =('black'), size = 3) +
+  scale_fill_manual(name = 'Protection', values = c("#D10000","#004C99"), labels = c('MPA','REF'))+
+  stat_smooth(method = 'lm',data = matched,color = 'black',size = 2, fullrange = T)+
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  coord_cartesian(xlim=c(10,40), ylim=c(0,60)) +
+  ylab('Plasma Igf1 ( ng / mL)')+
+  xlab('Length (cm)')+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'),legend.position = c(0.8,0.9),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'igf-len_lm.jpeg', height = 5, width = 7)
+```
+
+Residuals vs Protection*Location
+
+```{r}
+res.pro.loc = lm(dat_len$residuals~Protection*Location, data = matched)
+anova(res.pro.loc)
+```
+
+No interaction between Protection and Location so can exclude
+
+```{r}
+res.pro.loc = lm(dat_len$residuals~Protection+Location, data = matched)
+anova(res.pro.loc)
+```
+
+##Date effect
+
+```{r}
+#Effect of date
+ggplot(matched, aes(x = Date, y = stanIGF, color = Protection))+
+  geom_point()+
+  ylab('IGF1 concentration')+
+  theme_classic()
+
+aov.date = lm(igf~cDate, data = matched)
+sum_date = summary(aov.date)
+aov_date = anova(aov.date)
+```
+
+Residuals vs Protection and Location with Date interactions
+
+```{r}
+res.pro.loc.date = lm(dat_len$residuals~Protection*Date+Location*Date, data = matched)
+anova(res.pro.loc.date)
+```
+
+Date does not interact with Protection or Location
+
+```{r}
+res.pro.loc.date = lm(dat_len$residuals~Protection+Location+Date, data = matched)
+anova(res.pro.loc.date)
+anova(res.pro.loc,res.pro.loc.date)
+```
+
+Date signifcantly affects model
+
+**BUT** really our model should reflect our sampling methods with Protection and Location nested within Date as we only sample one Location x Protection each day.
+
+```{r}
+res.pro.loc.date = lm(dat_len$residuals~Date/(Location*Protection), data = matched)
+anova(res.pro.loc.date)
+```
+
+Now we can add Time
+
+```{r}
+#some time stamps not in military time
+matched = dplyr::rename(matched, St_time = `Start Time`, En_time = `End Time`)
+#following code does not work due to pipe. strptime does not want to accept piped vectors
+test = matched %>% dplyr::filter(lubridate::hour(matched$St_time) < 7)  
+#ifelse((lubridate::hour(test$St_time) < 7),(test$St_time = paste(test$St_time,'PM', sep = " ") %>% format(strptime(test$St_time, "%I:%M:%S %p"), format="%H:%M:%S")),(test$St_time))
+
+res.time = lm(dat_len$residuals~Date/(Location*Protection)+St_time, data = matched)
+summary(res.time)
+```
+
+Time is not significant in the model
+
+
+#Graphing
+
+```{r}
+#Bargraph of IGF1 by location and protection
+sumfish <- matched %>% dplyr::filter(!is.na(stanIGF)&!is.na(Length)) %>% group_by(Location,Protection) %>% dplyr::summarize(mean = mean(stanIGF), sem =  (sd(stanIGF)/sqrt(length(stanIGF))), mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF))
+
+summary(lm(igf~Location/Protection, data = matched))
+
+library(ggsignif)
+ggplot(sumfish, aes(x = Location, weight = mean, ymin=mean - sem, ymax=mean + sem, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
+  ylab('Plasma Igf1 (ng / ml)')+
+  coord_cartesian(ylim = c(15,35))+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(aes(y = mean), y_position=c(28,20), xmin=c(0.8, 1.8), xmax=c(1.2, 2.2),annotation=c("*", "NS"), tip_length=0) +
+  geom_signif(comparisons = list(c("PBL", "PBN")), test = t.test,aes(y = mean),
+              map_signif_level=TRUE, annotation = '***', y_position = 33)+
+  theme_classic(base_size = 18)+
+  theme(plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Plot1.tiff', width = 7, height = 5)
+
+
+summary(lm(Length~Location/Protection, data = matched))
+
+ggplot(sumfish, aes(x = Location, weight = mean.len, ymin=mean.len - sem.len, ymax=mean.len + sem.len, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=mean.len),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
+  ylab('Length (cm)')+
+  coord_cartesian(ylim = c(15,35))+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(aes(y = mean.len), y_position=c(26,22), xmin=c(0.8, 1.8), xmax=c(1.2, 2.2),annotation=c("NS", "NS"), textsize = 6, tip_length=0) +
+  geom_signif(comparisons = list(c("PBL", "PBN")), test = t.test,aes(y = mean.len),
+              map_signif_level=TRUE, annotation = '**',textsize = 6, y_position = 30)+
+  stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2)+
+  theme_classic(base_size = 18)+
+  theme(plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Plot2.tiff', width = 7, height = 5)
+
+all = matched %>% group_by(Location,Protection) 
+all.lm = lm(igf~Location+Protection + factor(Length), data = all)
+library(emmeans)
+all.lsm = emmeans(all.lm, c('Location','Protection'))
+library(multcompView)
+cld(all.lsm,Letters=letters)#adds letters and makes it readable
+```
+
+##Piedras Blancas
+
+```{r PBL}
+
+PBL <- matched %>% filter(!is.na(stanIGF) & Location == 'PBL') %>% group_by(Location,Protection,Date) %>% dplyr::summarize(mean.igf = mean(stanIGF), sem.igf =  (sd(stanIGF)/sqrt(length(stanIGF))),mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF)) 
+PBL$text_date = as.character(PBL$Date)
+PBL$group = c('1','2','1','2')
+
+PBLdat <- matched %>% filter(!is.na(igf) & Location == 'PBL')
+summary(lmer(igf~Protection+(1|Date),data = PBLdat))
+```
+
+Protection is not significant if you take into account Date as a random effect.
+
+###Igf
+Separate date anovas
+
+First 2 days (08/01-02)
+```{r}
+PBLdat$Date_c = as.character(PBLdat$Date)#adding character of date for lsmeans
+PBL.one <- filter(PBLdat,Date_c == '2016-08-01' | Date_c == '2016-08-02')
+anova(lm(igf~Date, data = PBL.one))
+```
+
+Last 2 days (08/15&17)
+```{r}
+PBL.two <- filter(PBLdat,Date_c == '2016-08-15' | Date_c == '2016-08-17')
+anova(lm(igf~Date, data = PBL.two))
+ggplot(PBL, aes(x = text_date, weight = mean.igf, ymin=mean.igf - sem.igf, ymax=mean.igf + sem.igf, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=mean.igf))+
+  geom_errorbar(width = 0.25)+
+  ylab('Plasma Igf1 (ng / ml)')+
+  xlab('')+
+  coord_cartesian(ylim = c(15,35))+
+  facet_grid(.~group, scales = 'free_x')+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(data=PBL,aes(y_position=c(32,32,26,26),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2.4)+
+  theme_classic(base_size = 18)+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(1,1,1.5,1.2),"cm"), strip.text.x = element_blank())
+ggsave(filename = 'PBL-igf1.tiff', width = 7, height = 5)
+```
+
+###Length 
+
+```{r}
+anova(lm(Length~Date*Protection, data = PBLdat))
+PBL.date = (lm(Length~Date, data = PBLdat))
+HSD.test(PBL.date,'Date')
+anova(lmer(Length~Protection+(1|Date), data = PBLdat))
+```
+
+Separate date anovas
+First 2 days (08/01-02)
+```{r}
+anova(lm(Length~Date, data = PBL.one))
+```
+
+Last 2 days (08/15&17)
+```{r}
+anova(lm(Length~Date, data = PBL.two))
+```
+
+While date has a significant effect on length, protection is not significant when date is in the model as a random effect.
+
+```{r Length plot}
+ggplot(PBL, aes(x = text_date, weight = mean.len, ymin=mean.len - sem.len, ymax=mean.len + sem.len, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=mean.len))+
+  geom_errorbar(width = 0.25)+
+  ylab('Length (cm)')+
+  xlab('')+
+  coord_cartesian(ylim=c(15,30))+
+  facet_grid(.~group, scales = 'free_x')+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(data=PBL,aes(y_position=c(26,26,23,23),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('*','*','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2)+
+  theme_classic(base_size = 18)+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(1,1,1.5,1.2),"cm"), strip.text.x = element_blank())
+ggsave(filename = 'PBL-length.tiff', width = 7, height = 5)
+```
+
+###LSmeans
+
+```{r}
+PBL.lm = lm(igf~Date_c + factor(Length), data = PBLdat)
+library(emmeans)
+PBL.lsm = emmeans(PBL.lm, 'Date_c') 
+library(multcompView)
+cld(PBL.lsm,Letters=letters)#adds letters and makes it readable
+```
+
+Separate ANOVAs
+
+First 2 days
+```{r}
+anova(lm(igf~Date_c + factor(Length), data = PBL.one))
+```
+
+Last 2 days
+```{r}
+anova(lm(igf~Date_c + factor(Length), data = PBL.two))
+
+#For graphing
+PBL.lm.graph = lm(stanIGF~Date_c+factor(Length), data = PBLdat)
+PBL.graph = cld(emmeans(PBL.lm.graph,'Date_c'))
+PBL.graph$Protection = c('REF','REF','MPA','MPA')
+PBL.graph$group=c(2,1,2,1)
+
+ggplot(PBL.graph, aes(x = Date_c, weight = emmean, ymin=emmean - SE, ymax=emmean + SE, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=emmean))+
+  geom_errorbar(width = 0.25)+
+  ylab('LSmeans Igf1 (ng / ml)')+
+  xlab('')+
+  coord_cartesian(ylim=c(15,35))+
+  facet_grid(.~group, scales = 'free_x')+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(data=PBL.graph,aes(y_position=c(32,32,28,28),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  theme_classic(base_size = 18)+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(2,1,1,1),"cm"), strip.text.x = element_blank())
+ggsave(filename = 'PBL-lsmeans.tiff', width = 7, height = 5)
+
+```
+
+##Point Buchon
+
+###Igf
+
+```{r PBN}
+
+PBN <- matched %>% filter(!is.na(stanIGF) & !is.na(Length) & Location == 'PBN') %>% group_by(Location,Protection,Date) %>% dplyr::summarize(mean.igf = mean(stanIGF), sem.igf =  (sd(stanIGF)/sqrt(length(stanIGF))),mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF)) 
+PBN$text_date = as.character(PBN$Date)
+PBN$group = c('1','2','1','2')
+
+
+PBNdat <- matched %>% filter(!is.na(stanIGF) & !is.na(Length) & Location == 'PBN')
+anova(lm(igf~Date*Protection, data = PBNdat))
+```
+
+Separate dates
+
+First 2 days (08/08-09)
+```{r}
+PBNdat$Date_c = as.character(PBNdat$Date)#adding character of date for lsmeans
+PBN.one <- filter(PBNdat,Date_c == '2016-08-09' | Date_c == '2016-08-08')
+anova(lm(igf~Date, data = PBN.one))
+```
+
+Last 2 days (09/08-09)
+```{r}
+PBN.two <- filter(PBNdat,Date_c == '2016-09-08' | Date_c == '2016-09-09')
+anova(lm(igf~Date, data = PBN.two))
+
+ggplot(PBN, aes(x = text_date, weight = mean.igf, ymin=mean.igf - sem.igf, ymax=mean.igf + sem.igf, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=mean.igf))+
+  geom_errorbar(width = 0.25)+
+  ylab('Plasma Igf1 (ng / ml)')+
+  xlab('')+
+  coord_cartesian(ylim = c(10,25))+
+  facet_grid(.~group, scales = 'free_x')+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(data=PBN,aes(y_position=c(23,23,18,18),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2.4)+
+  theme_classic(base_size = 18)+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(1,1,1.5,1.2),"cm"), strip.text.x = element_blank())
+ggsave(filename = 'PBN-igf1.tiff', width = 7, height = 5)
+```
+
+###Length
+```{r}
+anova(lm(Length~Date*Protection, data = PBNdat))
+```
+
+First 2 days
+```{r}
+anova(lm(Length~Date, data = PBN.one))
+```
+
+Last 2 days
+```{r}
+anova(lm(Length~Date, data = PBN.two))
+
+ggplot(PBN, aes(x = text_date, weight = mean.len, ymin=mean.len - sem.len, ymax=mean.len + sem.len, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=mean.len))+
+  geom_errorbar(width = 0.25)+
+  ylab('Length (cm)')+
+  xlab('')+
+  coord_cartesian(ylim=c(15,25))+
+  scale_y_continuous(breaks = c(15,20,25))+
+  facet_grid(.~group, scales = 'free_x')+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(data=PBN,aes(y_position=c(23,23,21,21),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('**','**','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  theme_classic(base_size = 18)+
+  stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2.4)+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(1,1,1.5,1.2),"cm"), strip.text.x = element_blank())
+ggsave(filename = 'PBN-length.tiff', width = 7, height = 5)
+```
+
+###LSmeans
+
+```{r}
+PBN.lm = lm(igf~Date_c + factor(Length), data = PBNdat)
+library(emmeans)
+PBN.lsm = emmeans(PBN.lm, 'Date_c')
+library(multcompView)
+cld(PBN.lsm,Letters=letters)#adds letters and makes it readable
+```
+
+First 2 days
+```{r}
+anova(lm(igf~Date_c + factor(Length), data = PBN.one))
+```
+
+Last 2 days
+```{r}
+anova(lm(igf~Date_c + factor(Length), data = PBN.two))
+
+#For graphing
+PBN.lm.graph = lm(stanIGF~Date_c+factor(Length), data = PBNdat)
+PBN.graph = cld(emmeans(PBN.lm.graph,'Date_c'))
+PBN.graph$Protection = c('MPA','REF','REF','MPA')
+PBN.graph$group=c(2,2,1,1)
+PBN.graph$sig = c('b','ab','ab','a')
+
+ggplot(PBN.graph, aes(x = Date_c, weight = emmean, ymin=emmean - SE, ymax=emmean + SE, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black', aes(y=emmean))+
+  geom_errorbar(width = 0.25)+
+  ylab('LSmeans Igf1 (ng / ml)')+
+  xlab('')+
+  coord_cartesian(ylim=c(15,30))+
+  facet_grid(.~group, scales = 'free_x')+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(data=PBN.graph,aes(y_position=c(24.5,24.5,21,21),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  theme_classic(base_size = 18)+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(2,1,1,1),"cm"), strip.text.x = element_blank())
+ggsave(filename = 'PBN-lsmeans.tiff', width = 7, height = 5)
+```
+
+
+#Correlations
+
+```{r Correlations}
+
+cor.test(matched$igf, matched$Length, method = 'pearson')
+
+# dat_sim = lm(igf~Location*Protection+Length+Date, data = mdat)
+
+#Correlation graph
+ggplot(matched, aes(y = stanIGF, x = Length)) + 
+  geom_point(aes(fill = Protection), shape = 21, color =('black'), size = 3) +
+  scale_fill_manual(name = 'Protection', values = c("#D10000","#004C99"), labels = c('MPA','REF'))+
+  stat_smooth(method = 'lm',data = mdat,color = 'black',size = 2, fullrange = T, se = F)+
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  coord_cartesian(xlim=c(10,40), ylim=c(0,60)) +
+  ylab('Plasma Igf1 ( ng / mL)')+
+  xlab('Length (cm)')+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'),legend.position = c(0.8,0.9),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'cor.bluerf.jpeg', height = 5, width = 7)
+
+cor.matched <- list()
+for (q in unique(matched$cDate)){
+  igf1 = dplyr::filter(matched, cDate == q)$igf
+  length = dplyr::filter(matched, cDate == q)$Length
+  correlation = cor.test(igf1,length,method='pearson')
+  correlation$data.name = q
+  cor.matched = cbind(cor.matched,correlation)
+}
+
+knitr::kable(cor.matched[c(1:4,8,9),], caption = 'Correlations of igf1 and length by date')
+```
+
+Ecological factors
+
+Blue is positive correlation and red is negative correlation
+
+```{r}
+#Average temperatures to get 1 temperature metric
+matched <- mutate(matched, vtemp = ((matched$`SWT (vessel, F)` - 32)*(5/9)))#convert to celsius
+matched$temp <- apply(matched[,c(19,34)],1,mean, na.rm=TRUE)#Average tempertures
+matched$depth <- apply(matched[,c(23,24)],1,mean,na.rm=T)#average depths
+#export for mapping
+RFBLU2016 <- matched[,c(10,3,4,8,11,13:18,33,35,36)]
+write_csv(RFBLU2016, 'RFBLU2016.csv')
+RFBLU_PBN <- filter(RFBLU2016, Location == 'PBN')
+write_csv(RFBLU_PBN, 'RFBLU_PBN.csv')
+RFBLU_PBL <- filter(RFBLU2016, Location == 'PBL')
+write_csv(RFBLU_PBL, 'RFBLU_PBL.csv')
+
+PCA <- matched[,c(20,35,22,25,26,28:31,36)]#only select columns used in PCA
+colnames(PCA)=c('DepT','SurT','Rel',"cloud",'wind','swell','waveht','wavedir','secchi','depth')
+library(corrplot)
+corrplot(cor(PCA, use = 'complete.obs'),method = "circle", order = 'FPC')
+```
+
+#PCA
+
+```{r}
+Loc <- matched[complete.cases(PCA),]$Location#Remove NAs
+cDate <- matched[complete.cases(PCA),]$cDate
+Protect <- matched[complete.cases(PCA),]$Protection
+#Run PCA
+blu.pca <- prcomp(na.omit(PCA), center = T, scale. = T)
+#summary(blu.pca)
+```
+
+
+```{r, include = F}
+library(ggbiplot)
+ggbiplot(blu.pca, obs.scale = 1, var.scale = 1, 
+              groups = Loc, ellipse = TRUE, 
+              circle = TRUE)+
+  scale_color_discrete(name = '')+
+  theme_classic()
+ggbiplot(blu.pca, obs.scale = 1, var.scale = 1, 
+              groups = cDate, ellipse = TRUE, 
+              circle = TRUE)+
+  scale_color_discrete(name = '')+
+  theme_classic()
+ggbiplot(blu.pca, obs.scale = 1, var.scale = 1, 
+              groups = Protect, ellipse = TRUE, 
+              circle = TRUE)+
+  scale_color_discrete(name = '')+
+  theme_classic()
+```
+
+Removing relief and cloud cover as they are catagorical
+
+```{r}
+mPCA <- PCA[,c(1,2,5:9)]
+blu2.pca <- prcomp(na.omit(mPCA), center = T, scale. = T)
+summary(blu2.pca)
+Kaiser = (blu2.pca$sdev)^2#Kaiser’s criterion: that we should only retain principal components for which the variance is above 1
+```
+
+We need 4 PCs to explain 90% of the variance but using Kaiser's criterion we should only retain the first 2 PCs
+
+```{r, PCA graphs}
+ggbiplot(blu2.pca, obs.scale = 1, var.scale = 1, 
+              groups = cDate, ellipse = TRUE, 
+              circle = TRUE)+
+  scale_color_discrete(name = '')+
+  theme_classic()
+ggbiplot(blu2.pca, obs.scale = 1, var.scale = 1, 
+              groups = Protect, ellipse = TRUE, 
+              circle = TRUE)+
+  scale_color_discrete(name = '')+
+  theme_classic()
+ggbiplot(blu2.pca, obs.scale = 1, var.scale = 1, 
+              groups = Loc, ellipse = TRUE, 
+              circle = TRUE)+
+  scale_color_discrete(name = '')+
+  theme_classic()
+```
+
+
+```{r}
+eco = matched[,c(20,35,22,25,26,28:31,36,32)]
+names(eco) = c('DepT','SurT','Rel',"cloud",'wind','swell','waveht','wavedeg','secchi','depth','igf')
+anova(lm(igf~DepT+SurT+Rel+cloud+wind+swell+waveht+wavedeg+secchi+depth, data = eco))
+```
+
+Adding PCAs to model
+
+```{r, include = F}
+dat_lenPCA = lm(igf~Length, data = matched[complete.cases(PCA),])
+pca.lm = lm(dat_lenPCA$residuals~blu.pca$x)
+summary(pca.lm)
+```
+
+```{r}
+pca.lm2 = lm(dat_lenPCA$residuals~blu2.pca$x)
+summary(pca.lm2)
+```
+
+PC1 and PC5 are the only significant predictors but PC5 only explains 5.5% of the overall variance in the data
+
+```{r}
+# Plot PC's 1 and 5:
+ggbiplot(blu2.pca, choices = c(1,5), obs.scale = 1, var.scale = 1, groups =Protect, ellipse = TRUE, circle = TRUE)+scale_color_discrete(name = '')+theme_classic()
+```
+
+Only including PC1 in the final model
+
+```{r}
+res.mod = lm(dat_lenPCA$residuals~Protect+ blu2.pca$x[,1])
+summary(res.mod)
+```
+
+```{r}
+##Heat Map
+# myloc = c(lon = -121.0227,lat = 35.5086)
+# slo <- get_map(location = myloc,source = 'google', maptype = 'hybrid')
+# ggmap(slo)+
+#   geom_density2d(data = matched,aes(x = ST_LonDD, y = ST_LatDD))+
+#   stat_density2d(data = matched,aes(x = ST_LonDD, y = ST_LatDD, fill=..level.., alpha=igf), size = 0.01,
+#     bins = 10, geom = "polygon") +
+#   scale_fill_gradient(low = "green", high = "red") +
+#   scale_alpha(range = c(0,5), guide = FALSE)
+```
+
+```{r}
+##Point Buchon
+# #make sure it is plotting igf and not counts
+# pbnloc = c(lon = -120.9,lat = 35.24)
+# pbn <- get_map(location = pbnloc,source = 'google', maptype = 'hybrid', zoom = 12)
+# #adding mpa polygon
+# library(raster)
+# shpData <- raster::shapefile("C:/Users/manic/OneDrive/Documents/RFOYT/Shapefiles/MPA_CA_Existing_160301.shp")
+# shpData <- spTransform(shpData,CRS("+proj=longlat +datum=WGS84"))#trnasform shp from Nad to wgs
+# 
+# ggmap(pbn)+
+#   geom_polygon(data = shpData,aes(x = long, y = lat), fill = 'red', alpha = 0.5)+
+#   #geom_density2d(data = PBNdat,aes(x = ST_LonDD, y = ST_LatDD))+
+#   #stat_density2d(data = PBNdat,aes(x = ST_LonDD, y = ST_LatDD, fill=..level.., alpha = ..level..), size = 0.1, bins = 16, geom = "polygon") +
+#   geom_tile(aes(x = End_LonDD, y = End_LatDD, color = stanIGF),data = PBNdat,size = 3)+
+# #   scale_fill_gradientn(colours = heat.colors(6))
+# #   scale_alpha(range = c(0, 1), guide = FALSE)+
+# #   scale_fill_gradient(low = "white", high = "dark green")
+# # geom_point(data = PBNdat, aes(x = ST_LonDD, y = ST_LatDD), size = PBNdat$stanIGF, bins = 20)
+# # add habitat information on top
+```
+

@@ -7,6 +7,8 @@ output:
   html_notebook: default
   pdf_document: default
   word_document: default
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup,include=F}
@@ -88,7 +90,7 @@ write.csv(mdata,'RFOLV-muscle.csv')
 
 #Muscle data
 
-```{r add treatment data, echo=F}
+```{r add treatment data, echo=F, warning=F}
 RFOYTgrowth <- read.csv("~/RFOYT/RFOYT/RFOYTgrowth.csv")
 #make new dataframe to play with
 growth<-as.data.frame(RFOYTgrowth)
@@ -116,6 +118,13 @@ adj_Cq = plyr::ddply(dat_test3, 'Sample', function(x){
   target_genes$Cq_normalized = target_genes$Cq/target_genes$mean_housekeeping#normalize all genes to their geometric mean
   return(target_genes)
 })
+
+#Add new data of bp1
+mbp1 <- read_excel("C:/Users/manic/Dropbox/Home computer/CalPoly/Rockfish/Lab results/RFOLVmuscleBP1aBP1b.xlsx")
+mbp1.2 = tidyr::gather(mbp1,'gene','Cq_normalized',c(6,8))
+mbp1.3 = mbp1.2[,c(2:3,7,8)] %>% dplyr::rename('Sample'='fish tag #')
+adj_Cq = dplyr::union_all(adj_Cq,mbp1.3) 
+adj_Cq = dplyr::filter(adj_Cq, !is.na(Cq_normalized))
 ```
 
 ```{r}
@@ -206,6 +215,8 @@ knitr::kable(anova(anova.stats.m[[5]]), caption = 'IGF1')
 knitr::kable(anova(anova.stats.m[[6]]), caption = 'IGF2')
 knitr::kable(anova(anova.stats.m[[7]]), caption = 'Recepter A')
 knitr::kable(anova(anova.stats.m[[8]]), caption = 'Recepter B')
+knitr::kable(anova(anova.stats.m[[9]]), caption = 'BP1a')
+knitr::kable(anova(anova.stats.m[[10]]), caption = 'BP1b')
 ```
 
 bp5a, bp5b and igf1 are significant.
@@ -229,7 +240,7 @@ for(n in 1:length(anova.stats.m)){
 knitr::kable(shapiro[c(1,2),], col.names = names(anova.stats.m))
 ```
 
-bp2a, bp2b, igf1, and igf2 have non-normal residuals.
+bp1a, bp1b, bp2a, bp2b, igf1, and igf2 have non-normal residuals.
 
 Looking at residuals for each gene.
 
@@ -249,9 +260,58 @@ ggplot(anova.stats.m[[5]], aes(x = .resid))+
 ggplot(anova.stats.m[[6]], aes(x = .resid))+
   geom_histogram()+
   ggtitle('IGF2')
+
+ggplot(anova.stats.m[[9]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP1a')
+
+ggplot(anova.stats.m[[10]], aes(x = .resid))+
+  geom_histogram()+
+  ggtitle('BP1b')
 ```
 
-bp2b definitely has a positive skew. igf1 & 2 & bp2a have a slight positive skew but look normal overall.
+bp2b, bp1a, & bp1b definitely have a positive skew. igf1 & 2 & bp2a have a slight positive skew but look normal overall.
+
+---
+
+###bp1a
+
+Sqrt Cq and test for normality.
+
+```{r, message=F}
+bp1a = filter(out_Cq, gene == 'BP1a/ref') %>% mutate(new_Cq = sqrt(Cq_normalized))
+test.log<- function(data){
+   lmgene = lm(new_Cq~treatment, data = data)
+   normality = shapiro.test(lmgene$residuals)
+   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
+   return(list(normality, hist))
+}
+test.log(bp1a)
+```
+
+Rerunning stats
+```{r}
+anova(lm(new_Cq~treatment, data = bp1a))
+```
+
+
+---
+
+
+###bp1b
+
+Log Cq and test for normality.
+
+```{r, message=F}
+bp1b = filter(out_Cq, gene == 'BP1b/ref') %>% mutate(new_Cq = log(Cq_normalized))
+test.log(bp1b)
+```
+
+Rerunning stats
+```{r}
+anova(lm(new_Cq~treatment, data = bp1b))
+```
+
 
 ---
 
@@ -261,12 +321,6 @@ Sqrt Cq and test for normality.
 
 ```{r, message=F}
 bp2a = filter(out_Cq, gene == 'mbp2a') %>% mutate(new_Cq = sqrt(Cq_normalized))
-test.log<- function(data){
-   lmgene = lm(new_Cq~treatment, data = data)
-   normality = shapiro.test(lmgene$residuals)
-   hist = ggplot(lmgene, aes(x = .resid))+geom_histogram()
-   return(list(normality, hist))
-}
 test.log(bp2a)
 ```
 
@@ -363,12 +417,12 @@ ggplot(igfs, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_
   geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
   ylab('Relative mRNA level')+
   xlab('Gene')+
-  coord_cartesian(ylim = c(0.5,2.5))+
+  coord_cartesian(ylim = c(0.5,2.6))+
   scale_x_discrete(labels = c("igf1","igf2"))+
   scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('Low ration','High ration'))+
-  geom_signif(aes(y = new_mean), y_position=2.4, xmin=0.7, xmax=1.3,annotation="***", tip_length=0, textsize = 6) +
-  theme_classic(base_size = 18)+
-  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"), legend.position = c(0.8,0.85))
+  geom_signif(aes(y = new_mean), y_position=2.5, xmin=0.8, xmax=1.2,annotation="***", tip_length=0, textsize = 8) +
+  theme_classic(base_size = 20)+
+  theme(axis.text.x = element_text(face = "italic", size = 22),axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"), axis.text.y = element_text(size = 22),legend.position = c(0.8,0.85))
 ggsave(filename = 'Fig7a.tiff', width = 7, height = 5)
 
 bps = sum_Cq %>% filter(gene != 'migf1' & gene != 'migf2' & gene != 'mra' & gene != 'mrb')
@@ -378,11 +432,11 @@ ggplot(bps, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=new_m
   ylab('Relative mRNA level')+
   xlab('Gene')+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.7))+
-  scale_x_discrete(labels = c("bp2a","bp2b",'bp5a','bp5b'))+
+  scale_x_discrete(labels = c('igfbp1a','igfbp1b',"igfbp2a","igfbp2b",'igfbp5a','igfbp5b'))+
   scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('High','Low'))+
-  geom_signif(aes(y = new_mean), y_position=c(1.5,1.5), xmin=c(2.7, 3.7), xmax=c(3.2, 4.2),annotation=c("*", "**"), tip_length=0, textsize = 6) +
-  theme_classic(base_size = 18)+
-  theme(axis.text.x = element_text(face = "italic"), legend.position = 'none',axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+  geom_signif(aes(y = new_mean), y_position=c(1.5,1.5), xmin=c(4.7, 5.7), xmax=c(5.2, 6.2),annotation=c("*", "**"), tip_length=0, textsize = 8) +
+  theme_classic(base_size = 20)+
+  theme(axis.text.x = element_text(face = "italic",size = 22, angle = 45, hjust=1), axis.text.y = element_text(size = 22),legend.position = 'none',axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'Fig7b.tiff', width = 7, height = 5)
 
 receps = sum_Cq %>% filter(gene == 'mra' | gene == 'mrb')
@@ -394,31 +448,31 @@ ggplot(receps, aes(x = gene, y = new_mean, ymin=new_mean - new_sem, ymax=new_mea
   coord_cartesian(ylim = c(0.75,1.2))+
   scale_x_discrete(labels = c('igf1ra','igf1rb'))+
   scale_fill_manual(values = c("#A9A9A9","#696969"))+
-  theme_classic(base_size = 18)+
-  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+  theme_classic(base_size = 20)+
+  theme(axis.text.x = element_text(face = "italic", size = 22),axis.title.x = element_blank(),axis.text.y = element_text(size = 22),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'Fig7c.tiff', width = 7, height = 5)
 
 ```
 
-Plasma and mRNA igf1 correlation
+Plasma and muscle mRNA igf1 correlation
 
 ```{r}
 pigf <- read_csv("igf1.csv")[,2:3]#pulled plasma igf1 from growth data
-migf <- filter(out_Cq, gene == 'migf1')#only want to look at correlation to liver igf1
+migf <- filter(out_Cq, gene == 'migf1')#only want to look at correlation to igf1
 cmigf1 <- inner_join(migf, pigf, by = c('Sample'='PITtag'))
 cmigf1 <- filter(cmigf1, !is.na(IGF1))
 
 cor.test(cmigf1$IGF1,cmigf1$Cq_normalized,method='pearson')
 
 ggplot(cmigf1, aes(x = IGF1, y = Cq_normalized)) + 
-  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 3) + 
   scale_fill_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration', 'Low ration'))+
   geom_smooth(method = lm, color = 'black', se = F)+
   xlab('Plasma Igf1')+
-  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
-  theme_classic(base_size = 18)+
-  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.2,0.8))
-ggsave(filename = 'FigS2a.tiff', width = 7, height = 5)
+  ylab(expression(paste('Relative muscle ',italic('igf1'), ' mRNA')))+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.2,0.8),axis.text = element_text(size = 22))
+ggsave(filename = 'Fig8.tiff', width = 7, height = 5)
 ```
 
 High treatment
@@ -429,14 +483,14 @@ cmigf1.h <- filter(cmigf1, treatment == 'h')
 cor.test(cmigf1.h$IGF1, cmigf1.h$Cq_normalized, method = 'pearson')
 
 ggplot(cmigf1.h, aes(x = IGF1, y = Cq_normalized)) + 
-  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 3) + 
   scale_fill_manual(values = "#696969")+
   geom_smooth(method = lm, color = 'black', se = F)+
   xlab('')+
-  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
-  theme_classic(base_size = 18)+
-  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
-ggsave(filename = 'FigS2b.tiff', width = 7, height = 5)
+  ylab(expression(paste('Relative muscle ',italic('igf1'), ' mRNA')))+
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none',axis.text = element_text(size = 22))
+ggsave(filename = 'FigS2a.tiff', width = 7, height = 5)
 ```
 
 Low treatment
@@ -447,15 +501,14 @@ cmigf1.l <- filter(cmigf1, treatment == 'l')
 cor.test(cmigf1.l$IGF1, cmigf1.l$Cq_normalized, method = 'pearson')
 
 ggplot(cmigf1.l, aes(x = IGF1, y = Cq_normalized)) + 
-  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 3) + 
   scale_fill_manual(values = "#A9A9A9")+
-  geom_smooth(method = lm, color = 'black', se = F)+
   xlab('Plasma Igf1')+
-  ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
+  ylab(expression(paste('Relative muscle ',italic('igf1'), ' mRNA')))+
   #xlim(10,30)+
-  theme_classic(base_size = 18)+
-  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
-ggsave(filename = 'FigS2c.tiff', width = 7, height = 5)
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none',axis.text = element_text(size = 22))
+ggsave(filename = 'FigS2b.tiff', width = 7, height = 5)
 ```
 
 
@@ -748,8 +801,8 @@ ggplot(igfs.l, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=ne
   coord_cartesian(ylim = c(0.75,1.2))+
   scale_x_discrete(labels = c("igf1","igf2"))+
   scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('Low ration','High ration'))+
-  theme_classic(base_size = 18)+
-  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+  theme_classic(base_size = 22)+
+  theme(axis.text.x = element_text(face = "italic",size = 22),axis.title.x = element_blank(),plot.margin=unit(c(1,1,1.5,1.2),"cm"),axis.text.y = element_text(size = 22))
 ggsave(filename = 'Fig5a.tiff', width = 7, height = 5)
 
 bps.liv = Cq_liv %>% filter(gene != 'IGF1' & gene != 'IGF2')
@@ -759,11 +812,11 @@ ggplot(bps.liv, aes(x = gene, weight = new_mean, ymin=new_mean - new_sem, ymax=n
   ylab('Relative mRNA level')+
   xlab('Gene')+
   scale_y_continuous(expand = c(0,0),limits = c(0,1.5))+
-  scale_x_discrete(labels = c("bp1a","bp1b",'bp2a','bp2b','bp5a','bp5b'))+
+  scale_x_discrete(labels = c("igfbp1a","igfbp1b",'igfbp2a','igfbp2b','igfbp5a','igfbp5b'))+
   scale_fill_manual(values = c("#A9A9A9","#696969"), name = 'Treatment', labels = c('Low','High'))+
-  geom_signif(aes(y = new_mean), y_position=c(1.4,1.3), xmin=c(0.7,1.7), xmax=c(1.3,2.3),annotation=c("**","***"), tip_length=0, textsize = 6) +
-  theme_classic(base_size = 18)+
-  theme(axis.text.x = element_text(face = "italic"),axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+  geom_signif(aes(y = new_mean), y_position=c(1.4,1.3), xmin=c(0.7,1.7), xmax=c(1.3,2.3),annotation=c("**","***"),vjust = 0.2, tip_length=0, textsize = 6) +
+  theme_classic(base_size = 20)+
+  theme(axis.text.x = element_text(face = "italic", angle = 45, size = 22, hjust = 1),axis.text.y = element_text(size = 22),axis.title.x = element_blank(),legend.position = 'none',plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'Fig5b.tiff', width = 7, height = 5)
 ```
 
@@ -778,13 +831,13 @@ cigf1 <- filter(cigf1, !is.na(IGF1) & PITtag != '56')
 cor.test(cigf1$IGF1,cigf1$Cq_normalized,method='pearson')
 
 ggplot(cigf1, aes(x = IGF1, y = Cq_normalized)) + 
-  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 3) + 
   scale_fill_manual(values = c("#696969","#A9A9A9"), name = 'Treatment', labels = c('High ration', 'Low ration'))+
   geom_smooth(method = lm, color = 'black', se = F)+
   xlab('Plasma Igf1')+
   ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
-  theme_classic(base_size = 18)+
-  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = c(0.9,0.15))
+  theme_classic(base_size = 22)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), axis.text.y = element_text(size = 22),axis.text.x = element_text(size = 22),legend.position = c(0.85,0.15))
 ggsave(filename = 'Fig6.tiff', width = 7, height = 5)
 ```
 
@@ -796,13 +849,13 @@ cigf1.h <- filter(cigf1, treatment == 'h')
 cor.test(cigf1.h$IGF1, cigf1.h$Cq_normalized, method = 'pearson')
 
 ggplot(cigf1.h, aes(x = IGF1, y = Cq_normalized)) + 
-  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 3) + 
   scale_fill_manual(values = "#696969")+
   geom_smooth(method = lm, color = 'black', se = F)+
   xlab('')+
   ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
-  theme_classic(base_size = 18)+
-  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'),axis.text.y = element_text(size = 22),axis.text.x = element_text(size = 22), legend.position = 'none')
 ggsave(filename = 'FigS1a.tiff', width = 7, height = 5)
 ```
 
@@ -814,14 +867,14 @@ cigf1.l <- filter(cigf1, treatment == 'l')
 cor.test(cigf1.l$IGF1, cigf1.l$Cq_normalized, method = 'pearson')
 
 ggplot(cigf1.l, aes(x = IGF1, y = Cq_normalized)) + 
-  geom_point(aes(fill = treatment), shape = 21, size = 2) + 
+  geom_point(aes(fill = treatment), shape = 21, size = 3) + 
   scale_fill_manual(values = "#A9A9A9")+
   geom_smooth(method = lm, color = 'black', se = F)+
   xlab('Plasma Igf1')+
   ylab(expression(paste('Relative liver ',italic('igf1'), ' mRNA')))+
   xlim(10,30)+
-  theme_classic(base_size = 18)+
-  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'), legend.position = 'none')
+  theme_classic(base_size = 20)+
+  theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'),axis.text.x = element_text(size = 22), axis.text.y = element_text(size = 22), legend.position = 'none')
 ggsave(filename = 'FigS1b.tiff', width = 7, height = 5)
 ```
 

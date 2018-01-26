@@ -1,7 +1,7 @@
 ---
 title: "RFBLU-CCFRP"
 author: "Nicole Hack"
-date: "October 29, 2017"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
 output:
   html_document: default
   html_notebook: default
@@ -174,7 +174,7 @@ lostdat3$Drift = as.numeric(lostdat3$Drift)
 matched = dplyr::bind_rows(mdat,misdat,mdat2,lostdat,lostdat2,lostdat3)
 ```
 
-265 samples matched to CCFRP data
+266 samples matched to CCFRP data
 
 ##Check for outliers and normality
 ```{r}
@@ -187,20 +187,26 @@ knitr::kable(igfremoved[,c(1,10:11)], caption = 'Outliers removed')
 
 #Removing #124 due to outlier
 matched <- filter(matched, Bloodsamp != 124)
-igf.lm <- lm(stanIGF~factor(Length), data = matched)
-shapiro.test(igf.lm$residuals)
-#ggplot(igf.lm, aes(x = .resid))+
-  #geom_histogram()
 ```
 
-Square root transforming data to normalize
+```{r, include=F}
+#Run linear regression to correct for length
+igf.lm <- lm(stanIGF~factor(Length), data = matched)
+shapiro.test(igf.lm$residuals)
+ggplot(igf.lm, aes(x = .resid))+
+  geom_histogram()
+```
 
-```{r}
+```{r, include=F}
 #removing nas
 matched <- filter(matched, !is.na(stanIGF))
+#Square root transforming data to normalize
 matched <- mutate(matched, igf = sqrt(stanIGF))
 new.lm = lm(igf~factor(Length), data = matched)
 shapiro.test(new.lm$residuals)
+
+
+write.csv(matched,'RFBLU-CCFRP.csv')
 ```
 
 #Models
@@ -234,18 +240,12 @@ summary(dat_sim)
 anova(dat_sim)
 ```
 
-Igf vs length
-
+Correct for length
 ```{r}
-dat_len = lm(igf~Length, data = matched)
-summary(dat_len)
-```
-
-Igf vs length+protection
-
-```{r}
-dat_lenpro = lm(igf~Length+Protection, data=matched)
-anova(dat_lenpro)
+dat_len = lm(stanIGF~Length, data = matched)
+sum_datlen = summary(dat_len)
+#Add residuals to orginal dataframe
+matched <- matched %>% modelr::add_residuals(dat_len)
 ```
 
 ```{r}
@@ -256,54 +256,65 @@ ggplot(matched, aes(y = stanIGF, x = Length)) +
   scale_x_continuous(expand=c(0,0)) +
   scale_y_continuous(expand=c(0,0)) +
   coord_cartesian(xlim=c(10,40), ylim=c(0,60)) +
-  ylab('Plasma Igf1 ( ng / mL)')+
+  ylab('Plasma Igf1 (ng / mL)')+
   xlab('Length (cm)')+
+  annotate('text',x = 15, y = 55, label = paste("r^2 == ", format(sum_datlen$adj.r.squared, digits = 2)), parse = T)+
   theme_classic(base_size = 20)+
   theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'),legend.position = c(0.8,0.9),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'igf-len_lm.jpeg', height = 5, width = 7)
 ```
 
-Residuals vs Protection*Location
+
+Residuals vs Protection & Location
 
 ```{r}
-res.pro.loc = lm(dat_len$residuals~Protection*Location, data = matched)
-anova(res.pro.loc)
+#Run model with residuals
+lm.res = lm(resid~Protection*Location, data = matched)
+anova(lm.res)
 ```
 
-No interaction between Protection and Location so can exclude
+Check for normality
 
-```{r}
-res.pro.loc = lm(dat_len$residuals~Protection+Location, data = matched)
-anova(res.pro.loc)
+```{r, Normality}
+shapiro.test(lm.res$residuals)
+ggplot(lm.res, aes(x = .resid))+geom_histogram()
+
+#Need to get rid of negatives for stats and graphs
+matched <- mutate(matched, stdIgf = (max(matched$resid)+resid))
 ```
+
+As this data looks normal and only does not pass the normality test due to a large sample size, I did not transform the data.
+
 
 ##Date effect
 
+*Using residuals
+
 ```{r}
 #Effect of date
-ggplot(matched, aes(x = Date, y = stanIGF, color = Protection))+
+ggplot(matched, aes(x = Date, y = stdIgf, color = Protection))+
   geom_point()+
-  ylab('IGF1 concentration')+
+  ylab('Residual IGF1 concentrations')+
   theme_classic()
 
-aov.date = lm(igf~cDate, data = matched)
+aov.date = lm(resid~cDate, data = matched)
 sum_date = summary(aov.date)
-aov_date = anova(aov.date)
+anova(aov.date)
 ```
 
-Residuals vs Protection and Location with Date interactions
+Residuals vs Protection and Location with Date 
 
 ```{r}
-res.pro.loc.date = lm(dat_len$residuals~Protection*Date+Location*Date, data = matched)
+res.pro.loc.date = lm(resid~Protection*Location*Date, data = matched)
 anova(res.pro.loc.date)
 ```
 
-Date does not interact with Protection or Location
+Date does not interact with Location or Preotection
 
 ```{r}
-res.pro.loc.date = lm(dat_len$residuals~Protection+Location+Date, data = matched)
+res.pro.loc.date = lm(resid~Protection*Location+Date, data = matched)
 anova(res.pro.loc.date)
-anova(res.pro.loc,res.pro.loc.date)
+anova(lm.res,res.pro.loc.date)
 ```
 
 Date signifcantly affects model
@@ -320,24 +331,57 @@ Now we can add Time
 ```{r}
 #some time stamps not in military time
 matched = dplyr::rename(matched, St_time = `Start Time`, En_time = `End Time`)
-#following code does not work due to pipe. strptime does not want to accept piped vectors
-test = matched %>% dplyr::filter(lubridate::hour(matched$St_time) < 7)  
+test = matched %>% dplyr::filter(lubridate::hour(matched$St_time) < 7)  %>% dplyr::select(id,St_time,En_time)
+write.csv(test, 'RFBLUtime-in-pm.csv')
+#Try to fix times...following code does not work due to pipe. strptime does not want to accept piped vectors
 #ifelse((lubridate::hour(test$St_time) < 7),(test$St_time = paste(test$St_time,'PM', sep = " ") %>% format(strptime(test$St_time, "%I:%M:%S %p"), format="%H:%M:%S")),(test$St_time))
 
-res.time = lm(dat_len$residuals~Date/(Location*Protection)+St_time, data = matched)
+#Replace wrong data with NAs for now
+matched.na <- matched[!(matched$id %in% test$id),]
+#rerun model with new data
+dat_len_na = lm(stanIGF~Length, data = matched.na)
+res.time = lm(dat_len_na$residuals~Date/(Location*Protection)+St_time, data = matched.na)
 summary(res.time)
 ```
 
 Time is not significant in the model
 
-
 #Graphing
 
-```{r}
+*With residuals*
+```{r, Residuals by location}
+
+#Bargraph of IGF1 by location and protection
+sumresfish <- matched %>% 
+  group_by(Location,Protection) %>%
+  dplyr::summarize(mean = mean(stdIgf), sem =  (sd(stdIgf)/sqrt(length(stdIgf))), mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stdIgf))
+
+summary(lm(stdIgf~Location/Protection-1, data = matched))
+
+library(ggsignif)
+ggplot(sumresfish, aes(x = Location, weight = mean, ymin=mean - sem, ymax=mean + sem, fill = Protection))+
+  geom_bar(stat = 'identity', color = 'black',width = 0.6, aes(y=mean),position=position_dodge(width = 0.6))+
+  geom_errorbar(width = 0.25, position=position_dodge(width=0.6))+
+  ylab(expression('Plasma Igf1'['STD']))+
+  coord_cartesian(ylim = c(25,40))+
+  scale_fill_manual(values = c("#D10000","#004C99"))+
+  geom_signif(aes(y = mean), y_position=c(36,29), xmin=c(0.8, 1.8), xmax=c(1.2, 2.2),annotation=c("***", "NS"), tip_length=0) +
+  geom_signif(comparisons = list(c("PBL", "PBN")), test = t.test,aes(y = mean),
+              map_signif_level=TRUE, annotation = '***', y_position = 38)+
+  theme_classic(base_size = 18)+
+  theme(plot.margin=unit(c(1,1,1.5,1.2),"cm"))
+ggsave(filename = 'Res.Loc.tiff', width = 7, height = 5)
+```
+
+
+
+*With raw data*
+
+```{r, include=F}
 #Bargraph of IGF1 by location and protection
 sumfish <- matched %>% dplyr::filter(!is.na(stanIGF)&!is.na(Length)) %>% group_by(Location,Protection) %>% dplyr::summarize(mean = mean(stanIGF), sem =  (sd(stanIGF)/sqrt(length(stanIGF))), mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF))
 
-summary(lm(igf~Location/Protection, data = matched))
+summary(lm(igf~Location/Protection-1, data = matched))
 
 library(ggsignif)
 ggplot(sumfish, aes(x = Location, weight = mean, ymin=mean - sem, ymax=mean + sem, fill = Protection))+
@@ -352,8 +396,11 @@ ggplot(sumfish, aes(x = Location, weight = mean, ymin=mean - sem, ymax=mean + se
   theme_classic(base_size = 18)+
   theme(plot.margin=unit(c(1,1,1.5,1.2),"cm"))
 ggsave(filename = 'Plot1.tiff', width = 7, height = 5)
+```
 
+Length by Location/Protection
 
+```{r, Length}
 summary(lm(Length~Location/Protection, data = matched))
 
 ggplot(sumfish, aes(x = Location, weight = mean.len, ymin=mean.len - sem.len, ymax=mean.len + sem.len, fill = Protection))+
@@ -380,46 +427,113 @@ cld(all.lsm,Letters=letters)#adds letters and makes it readable
 
 ##Piedras Blancas
 
+*With residuals
+
 ```{r PBL}
 
-PBL <- matched %>% filter(!is.na(stanIGF) & Location == 'PBL') %>% group_by(Location,Protection,Date) %>% dplyr::summarize(mean.igf = mean(stanIGF), sem.igf =  (sd(stanIGF)/sqrt(length(stanIGF))),mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF)) 
+PBL <- matched %>% filter(!is.na(stdIgf) & Location == 'PBL') %>% group_by(Location,Protection,Date) %>% dplyr::summarize(mean.igf = mean(stdIgf), sem.igf =  (sd(stdIgf)/sqrt(length(stdIgf))),mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF)) 
 PBL$text_date = as.character(PBL$Date)
 PBL$group = c('1','2','1','2')
 
-PBLdat <- matched %>% filter(!is.na(igf) & Location == 'PBL')
-summary(lmer(igf~Protection+(1|Date),data = PBLdat))
+PBLdat <- matched %>% filter(!is.na(resid) & Location == 'PBL')
+summary(lmer(resid~Protection+(1|Date),data = PBLdat))
 ```
 
 Protection is not significant if you take into account Date as a random effect.
 
 ###Igf
+
+*Using residuals
+
 Separate date anovas
 
 First 2 days (08/01-02)
 ```{r}
 PBLdat$Date_c = as.character(PBLdat$Date)#adding character of date for lsmeans
 PBL.one <- filter(PBLdat,Date_c == '2016-08-01' | Date_c == '2016-08-02')
-anova(lm(igf~Date, data = PBL.one))
+anova(lm(stdIgf~Date, data = PBL.one))
 ```
 
 Last 2 days (08/15&17)
-```{r}
+```{r, warning = F}
 PBL.two <- filter(PBLdat,Date_c == '2016-08-15' | Date_c == '2016-08-17')
-anova(lm(igf~Date, data = PBL.two))
+anova(lm(stdIgf~Date, data = PBL.two))
 ggplot(PBL, aes(x = text_date, weight = mean.igf, ymin=mean.igf - sem.igf, ymax=mean.igf + sem.igf, fill = Protection))+
   geom_bar(stat = 'identity', color = 'black', aes(y=mean.igf))+
   geom_errorbar(width = 0.25)+
-  ylab('Plasma Igf1 (ng / ml)')+
+  ylab(expression('Plasma Igf1'['STD']))+
   xlab('')+
-  coord_cartesian(ylim = c(15,35))+
+  coord_cartesian(ylim = c(20,45))+
   facet_grid(.~group, scales = 'free_x')+
   scale_fill_manual(values = c("#D10000","#004C99"))+
-  geom_signif(data=PBL,aes(y_position=c(32,32,26,26),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  geom_signif(data=PBL,aes(y_position=c(40,40,37,37),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('*','*','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
   stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2.4)+
   theme_classic(base_size = 18)+
   theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(1,1,1.5,1.2),"cm"), strip.text.x = element_blank())
 ggsave(filename = 'PBL-igf1.tiff', width = 7, height = 5)
 ```
+
+*Using square root transformed raw data
+
+First 2 days (08/01-02)
+```{r}
+pbl1_len = lm(igf~Length, data = PBL.one)
+summary(pbl1_len)
+ggplot(PBL.one, aes(x=Length, y=igf))+geom_point()+geom_smooth(method='lm')+theme_classic()
+```
+
+Last 2 days (08/15&17)
+```{r}
+pbl2_len = lm(igf~Length, data = PBL.two)
+summary(pbl2_len)
+ggplot(PBL.two, aes(x=Length, y=igf))+geom_point()+geom_smooth(method='lm')+theme_classic()
+```
+
+Comparing between two regressions
+```{r}
+#need to make column with labeled groups
+PBLdat = PBLdat %>% group_by(Date) %>% dplyr::mutate(group = ifelse(lubridate::day(Date)<5,paste('1'),paste('2')))
+anova(lm(igf~Length+group, data = PBLdat))
+ggplot(PBLdat, aes(x = Length, y=igf, color = group))+
+  geom_point()+
+  geom_smooth(method = 'lm')+
+  scale_color_manual(values = c("orange","brown"), name = '', labels = c('Aug 8-9', 'Aug 15-17'))+
+  theme_classic()
+```
+
+Groups of dates have significantly different slopes but the issue is they also have different lengths.
+
+```{r}
+summary(lm(Length~group, data = PBLdat))
+ggplot(PBLdat, aes(x = group, y=Length, color = group))+
+  geom_boxplot()+
+  geom_smooth(method = 'lm')+
+  scale_color_manual(values = c("orange","brown"))+
+  scale_x_discrete(labels = c('Aug 8-9','Aug 15-17'))+
+  xlab('')+
+  theme_classic()+
+  theme(legend.position = 'none')
+```
+
+Running regression on *non-normalized* igf1 and saving residuals
+
+Aug 08-09
+```{r}
+pbl1_res <- lm(stanIGF~Length, data = PBL.one)
+summary(pbl1_res)
+PBL.one <- PBL.one %>% modelr::add_residuals(pbl1_res)
+pls::predplot(pbl1_res)
+```
+
+Aug 15-17
+```{r}
+pbl2_res <- lm(stanIGF~Length, data = PBL.two)
+summary(pbl2_res)
+PBL.two <- PBL.two %>% modelr::add_residuals(pbl2_res)
+pls::predplot(pbl2_res)
+```
+
+I don't know if you want to do that if length and igf don't correlate.
 
 ###Length 
 
@@ -460,6 +574,8 @@ ggsave(filename = 'PBL-length.tiff', width = 7, height = 5)
 ```
 
 ###LSmeans
+
+This is using raw data and not the residuals.
 
 ```{r}
 PBL.lm = lm(igf~Date_c + factor(Length), data = PBLdat)
@@ -505,15 +621,17 @@ ggsave(filename = 'PBL-lsmeans.tiff', width = 7, height = 5)
 
 ###Igf
 
+*With residuals
+
 ```{r PBN}
 
-PBN <- matched %>% filter(!is.na(stanIGF) & !is.na(Length) & Location == 'PBN') %>% group_by(Location,Protection,Date) %>% dplyr::summarize(mean.igf = mean(stanIGF), sem.igf =  (sd(stanIGF)/sqrt(length(stanIGF))),mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stanIGF)) 
+PBN <- matched %>% filter(!is.na(stdIgf) & !is.na(Length) & Location == 'PBN') %>% group_by(Location,Protection,Date) %>% dplyr::summarize(mean.igf = mean(stdIgf), sem.igf =  (sd(stdIgf)/sqrt(length(stdIgf))),mean.len = mean(Length), sem.len = (sd(Length)/sqrt(length(Length))), n=length(stdIgf)) 
 PBN$text_date = as.character(PBN$Date)
 PBN$group = c('1','2','1','2')
 
 
-PBNdat <- matched %>% filter(!is.na(stanIGF) & !is.na(Length) & Location == 'PBN')
-anova(lm(igf~Date*Protection, data = PBNdat))
+PBNdat <- matched %>% filter(!is.na(stdIgf) & !is.na(Length) & Location == 'PBN') %>% group_by(Date) %>% mutate(group = as.character(month(Date)))
+anova(lm(stdIgf~Date*Protection, data = PBNdat))
 ```
 
 Separate dates
@@ -522,28 +640,85 @@ First 2 days (08/08-09)
 ```{r}
 PBNdat$Date_c = as.character(PBNdat$Date)#adding character of date for lsmeans
 PBN.one <- filter(PBNdat,Date_c == '2016-08-09' | Date_c == '2016-08-08')
-anova(lm(igf~Date, data = PBN.one))
+anova(lm(stdIgf~Date, data = PBN.one))
 ```
 
 Last 2 days (09/08-09)
 ```{r}
 PBN.two <- filter(PBNdat,Date_c == '2016-09-08' | Date_c == '2016-09-09')
-anova(lm(igf~Date, data = PBN.two))
+anova(lm(stdIgf~Date, data = PBN.two))
 
 ggplot(PBN, aes(x = text_date, weight = mean.igf, ymin=mean.igf - sem.igf, ymax=mean.igf + sem.igf, fill = Protection))+
   geom_bar(stat = 'identity', color = 'black', aes(y=mean.igf))+
   geom_errorbar(width = 0.25)+
   ylab('Plasma Igf1 (ng / ml)')+
   xlab('')+
-  coord_cartesian(ylim = c(10,25))+
+  coord_cartesian(ylim = c(20,35))+
   facet_grid(.~group, scales = 'free_x')+
   scale_fill_manual(values = c("#D10000","#004C99"))+
-  geom_signif(data=PBN,aes(y_position=c(23,23,18,18),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
+  geom_signif(data=PBN,aes(y_position=c(31.5,31.5,28,28),xmin=c(0.8,0.8,0.8,0.8), xmax=c(2.2,2.2,2.2,2.2), annotations=c('NS','NS','NS','NS')),tip_length = 0,textsize = 6, manual=T) +
   stat_count(aes(label = n), geom = "text",size = 6, color='white', position=position_dodge(width = 0.6), vjust=2.4)+
   theme_classic(base_size = 18)+
   theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = unit(c(1,1,1.5,1.2),"cm"), strip.text.x = element_blank())
 ggsave(filename = 'PBN-igf1.tiff', width = 7, height = 5)
 ```
+
+*Using square root transformed raw data
+
+First 2 days (08/08-09)
+```{r}
+aov_pbn1 = lm(igf~Length, data = PBN.one)
+anova(aov_pbn1)
+```
+
+Last 2 days (09/08-09)
+```{r}
+aov_pbn2 = lm(igf~Length,data=PBN.two)
+anova(aov_pbn2)
+```
+
+Comparing between two regressions
+```{r}
+anova(lm(igf~Length+group, data = PBNdat))
+ggplot(PBNdat, aes(x = Length, y=igf, color = group))+
+  geom_point()+
+  geom_smooth(method = 'lm')+
+  scale_color_manual(values = c("orange","brown"), name = '', labels = c('August', 'September'))+
+  theme_classic()
+```
+
+The groups of dates are significantly different but the issue is that the lengths at these dates are also significantly different
+
+```{r}
+summary(lm(Length~group, data = PBNdat))
+ggplot(PBNdat, aes(x = group, y=Length, color = group))+
+  geom_boxplot()+
+  geom_smooth(method = 'lm')+
+  scale_color_manual(values = c("orange","brown"))+
+  scale_x_discrete(labels = c('August','September'))+
+  xlab('')+
+  theme_classic()+
+  theme(legend.position = 'none')
+```
+
+Running regression on *non-normalized* data and saving residuals
+
+August
+```{r}
+pbn1_res <- lm(stanIGF~Length, data = PBN.one)
+summary(pbn1_res)
+PBN.one <- PBN.one %>% modelr::add_residuals(pbn1_res)
+pls::predplot(pbn1_res)
+```
+
+September
+```{r}
+pbn2_res <- lm(stanIGF~Length, data = PBN.two)
+summary(pbn2_res)
+PBN.two <- PBN.two %>% modelr::add_residuals(pbn2_res)
+pls::predplot(pbn2_res)
+```
+
 
 ###Length
 ```{r}
@@ -576,6 +751,8 @@ ggsave(filename = 'PBN-length.tiff', width = 7, height = 5)
 ```
 
 ###LSmeans
+
+This is using raw Igf data not residuals.
 
 ```{r}
 PBN.lm = lm(igf~Date_c + factor(Length), data = PBNdat)
@@ -615,28 +792,23 @@ ggplot(PBN.graph, aes(x = Date_c, weight = emmean, ymin=emmean - SE, ymax=emmean
 ggsave(filename = 'PBN-lsmeans.tiff', width = 7, height = 5)
 ```
 
-
 #Correlations
 
 ```{r Correlations}
 
-cor.test(matched$igf, matched$Length, method = 'pearson')
-
-# dat_sim = lm(igf~Location*Protection+Length+Date, data = mdat)
-
 #Correlation graph
-ggplot(matched, aes(y = stanIGF, x = Length)) + 
+ggplot(matched, aes(y = stdIgf, x = Length)) + 
   geom_point(aes(fill = Protection), shape = 21, color =('black'), size = 3) +
   scale_fill_manual(name = 'Protection', values = c("#D10000","#004C99"), labels = c('MPA','REF'))+
-  stat_smooth(method = 'lm',data = mdat,color = 'black',size = 2, fullrange = T, se = F)+
+  stat_smooth(method = 'lm',data = matched ,color = 'black',size = 2, fullrange = T, se = F)+
   scale_x_continuous(expand=c(0,0)) +
   scale_y_continuous(expand=c(0,0)) +
   coord_cartesian(xlim=c(10,40), ylim=c(0,60)) +
-  ylab('Plasma Igf1 ( ng / mL)')+
+  ylab(expression('Plasma Igf1'['STD']))+
   xlab('Length (cm)')+
   theme_classic(base_size = 20)+
   theme(legend.background = element_rect(linetype = 'solid', size = 0.5, colour = 'black'),legend.position = c(0.8,0.9),plot.margin=unit(c(1,1,1.5,1.2),"cm"))
-ggsave(filename = 'cor.bluerf.jpeg', height = 5, width = 7)
+ggsave(filename = 'cor.stdIgf.jpeg', height = 5, width = 7)
 
 cor.matched <- list()
 for (q in unique(matched$cDate)){
@@ -650,35 +822,111 @@ for (q in unique(matched$cDate)){
 knitr::kable(cor.matched[c(1:4,8,9),], caption = 'Correlations of igf1 and length by date')
 ```
 
-Ecological factors
+#PCA
+
+```{r, Editting data, include =F}
+# Get data from 2016/08/08 (buoy) 
+DCbuoy <- read_table("DCbuoy.txt")
+names(DCbuoy)[1] <- 'YY' #Get rid of hashtag
+#clean data to make datetime column for merging
+DCbuoy_clean = DCbuoy %>%
+  filter(!is.na(YY)) %>%
+  unite(date, YY,MM,DD, sep = '/')%>%
+  unite(time, hh,mm, sep = ':')%>%
+  unite(datetime, date, time, sep = ' ' )%>%
+  mutate(datetime = lubridate::ymd_hm(datetime, tz = 'UTC')) %>% 
+  mutate(datetime = lubridate::with_tz(datetime, tzone = "US/Pacific"),month = as.character(lubridate::month(datetime))) %>%
+  dplyr::filter(WTMP<75) 
+
+#Select specific dates in buoy data of my sampling dates
+buoy_summerT = DCbuoy_clean %>%
+  dplyr::select(datetime, WTMP)
+buoy_summerT = buoy_summerT[as.Date(buoy_summerT$datetime) %in% unique(matched$Date),]
+
+#Make datetime in my dataframe
+temp.test = unite(matched, cDateTime, cDate, St_time, sep = ' ') %>%
+  mutate(cDateTime =lubridate::ymd_hms(cDateTime, tz = "US/Pacific" ))
+#Find earliest start time and latest end time for each day
+collection_times = temp.test %>% group_by(Date) %>%
+  dplyr::summarise(Start = min(cDateTime), End = max(cDateTime), n =length(cDateTime))
+collection_times$Start = lubridate::floor_date(collection_times$Start, unit = 'hour')
+collection_times$End = lubridate::ceiling_date(collection_times$End, unit = 'hour')
+#Extract buoy data from the times in collection_times
+buoy <- data.frame()
+for (n in 1:nrow(collection_times)){
+  time = buoy_summerT[buoy_summerT$datetime>collection_times$Start[n] & buoy_summerT$datetime<collection_times$End[n],]
+  buoy = rbind(buoy,time)
+}
+```
+```{r, Testing temps}
+#See if sources of temperature are different
+temps_plot = ggplot(buoy, aes(x = datetime, y = WTMP))+geom_point()+geom_point(data = temp.test, aes(x = cDateTime, y = `Surface T (instrument, C)`), color = 'red')
+#Select temps from date with most data 08-09
+temp.aug8 = temp.test %>% 
+  filter(Date == '2016-08-09')  
+buoyTemp_20160809 = buoy[as.Date(buoy$datetime)==as.Date('2016-08-09'),]
+#run t-test
+testtemps = t.test(temp.aug8$`Surface T (instrument, C)`,buoyTemp_20160809$WTMP)
+plot08092016 = ggplot(buoyTemp_20160809, aes(x = datetime, y = WTMP))+geom_point() + geom_point(data = temp.aug8, aes(x = cDateTime, y = `Surface T (instrument, C)`  ), color = 'red')
+#average temps and test again
+temp.test <- mutate(temp.test, vtemp = ((temp.test$`SWT (vessel, F)` - 32)*(5/9)))#convert to celsius
+temp.test$temp <- apply(temp.test[,c(19,35)],1,mean, na.rm=TRUE)#Average tempertures
+#See if sources of temperature are different
+temps_plot2 = ggplot(buoy, aes(x = datetime, y = WTMP))+geom_point()+geom_point(data = temp.test, aes(x = cDateTime, y = temp), color = 'red')
+#Temperatures significantly different so can only use buoy data in PCA
+```
+
+```{r}
+#Get means per day per hour for buoy data
+buoy.sum <- buoy %>% group_by(as.Date(datetime),hour(datetime)) %>% dplyr::summarise(mtemp = mean(WTMP), sdtemp = sd(WTMP), n=length(datetime)) %>% mutate(cDateTime = paste(`as.Date(datetime)`,`hour(datetime)`)) 
+buoy.sum$cDateTime = lubridate::ymd_h(buoy.sum$cDateTime)
+#make matching column in my data in order to join
+temp.test = mutate(temp.test, datehour = paste(Date,hour(cDateTime))) 
+temp.test$datehour = lubridate::ymd_h(temp.test$datehour)
+#join data sets and make new column 
+matched.new = dplyr::left_join(temp.test,buoy.sum, by = c('datehour'='cDateTime')) %>% dplyr::arrange(datehour)#ensure it is in ascending order for fill() to work
+matched.new = tidyr::fill(matched.new,mtemp)#fills NA values with value above
+#Missing values are due to the buoy missing data 
+#Double check data to ensure it duplicates temperatures that are close in time
+```
 
 Blue is positive correlation and red is negative correlation
 
 ```{r}
-#Average temperatures to get 1 temperature metric
-matched <- mutate(matched, vtemp = ((matched$`SWT (vessel, F)` - 32)*(5/9)))#convert to celsius
-matched$temp <- apply(matched[,c(19,34)],1,mean, na.rm=TRUE)#Average tempertures
-matched$depth <- apply(matched[,c(23,24)],1,mean,na.rm=T)#average depths
+#average depths
+matched.new$depth <- apply(matched.new[,c(23,24)],1,mean,na.rm=T)
 #export for mapping
-RFBLU2016 <- matched[,c(10,3,4,8,11,13:18,33,35,36)]
+RFBLU2016 <- matched.new[,c(10,3,4,8,34,15:18,22,25,26,28:31,40,43)]
 write_csv(RFBLU2016, 'RFBLU2016.csv')
 RFBLU_PBN <- filter(RFBLU2016, Location == 'PBN')
 write_csv(RFBLU_PBN, 'RFBLU_PBN.csv')
 RFBLU_PBL <- filter(RFBLU2016, Location == 'PBL')
 write_csv(RFBLU_PBL, 'RFBLU_PBL.csv')
 
-PCA <- matched[,c(20,35,22,25,26,28:31,36)]#only select columns used in PCA
-colnames(PCA)=c('DepT','SurT','Rel',"cloud",'wind','swell','waveht','wavedir','secchi','depth')
+PCA <- matched.new[,c(22,25,26,28:31,40,43)]#only select columns used in PCA
+colnames(PCA)=c('Rel',"cloud",'windsp','swell','waveht','wavedir','secchi','temp','depth')
 library(corrplot)
 corrplot(cor(PCA, use = 'complete.obs'),method = "circle", order = 'FPC')
 ```
 
-#PCA
 
 ```{r}
-Loc <- matched[complete.cases(PCA),]$Location#Remove NAs
-cDate <- matched[complete.cases(PCA),]$cDate
-Protect <- matched[complete.cases(PCA),]$Protection
+#make dataset of just PCA terms
+eco = matched.new[,c(22,25,26,28:31,43,40,34)]
+names(eco) = c('Rel',"cloud",'windsp','swell','waveht','wavedeg','secchi','depth','temp','stdigf')
+anova(lm(stdigf~Rel+cloud+windsp+swell+waveht+wavedeg+secchi+depth+temp, data = eco))
+
+#Find which variables have most NAs
+pca.sum <- eco %>%
+  dplyr::summarise_all(funs(sum(is.na(.))))
+
+mtemps = matched.new %>% group_by(Location,Date,sicell,Drift) %>% dplyr::summarise(mtemp = mean(mtemp, na.rm=T),n = length(mtemp))
+```
+
+```{r}
+Loc <- matched.new[complete.cases(PCA),]$Location#Remove NAs
+cDate <- matched.new[complete.cases(PCA),]$Date
+Protect <- matched.new[complete.cases(PCA),]$Protection
 #Run PCA
 blu.pca <- prcomp(na.omit(PCA), center = T, scale. = T)
 #summary(blu.pca)
@@ -693,7 +941,7 @@ ggbiplot(blu.pca, obs.scale = 1, var.scale = 1,
   scale_color_discrete(name = '')+
   theme_classic()
 ggbiplot(blu.pca, obs.scale = 1, var.scale = 1, 
-              groups = cDate, ellipse = TRUE, 
+              groups = as.character(cDate), ellipse = TRUE, 
               circle = TRUE)+
   scale_color_discrete(name = '')+
   theme_classic()
@@ -704,20 +952,22 @@ ggbiplot(blu.pca, obs.scale = 1, var.scale = 1,
   theme_classic()
 ```
 
-Removing relief and cloud cover as they are catagorical
+PCA not including relief and cloud cover as they are catagorical
 
 ```{r}
-mPCA <- PCA[,c(1,2,5:9)]
+mPCA <- PCA[,c(3:9)]
 blu2.pca <- prcomp(na.omit(mPCA), center = T, scale. = T)
 summary(blu2.pca)
 Kaiser = (blu2.pca$sdev)^2#Kaiser’s criterion: that we should only retain principal components for which the variance is above 1
+kaiser = as.data.frame(Kaiser) 
+knitr::kable(kaiser, caption = 'Kaiser values for PC1-7')
 ```
 
-We need 4 PCs to explain 90% of the variance but using Kaiser's criterion we should only retain the first 2 PCs
+We need 5 PCs to explain 90% of the variance but using Kaiser's criterion we should only retain the first 3 PCs
 
 ```{r, PCA graphs}
 ggbiplot(blu2.pca, obs.scale = 1, var.scale = 1, 
-              groups = cDate, ellipse = TRUE, 
+              groups = as.character(cDate), ellipse = TRUE, 
               circle = TRUE)+
   scale_color_discrete(name = '')+
   theme_classic()
@@ -734,40 +984,80 @@ ggbiplot(blu2.pca, obs.scale = 1, var.scale = 1,
 ```
 
 
-```{r}
-eco = matched[,c(20,35,22,25,26,28:31,36,32)]
-names(eco) = c('DepT','SurT','Rel',"cloud",'wind','swell','waveht','wavedeg','secchi','depth','igf')
-anova(lm(igf~DepT+SurT+Rel+cloud+wind+swell+waveht+wavedeg+secchi+depth, data = eco))
-```
-
 Adding PCAs to model
 
-```{r, include = F}
-dat_lenPCA = lm(igf~Length, data = matched[complete.cases(PCA),])
-pca.lm = lm(dat_lenPCA$residuals~blu.pca$x)
-summary(pca.lm)
-```
+Including cloud cover and relief:
 
 ```{r}
-pca.lm2 = lm(dat_lenPCA$residuals~blu2.pca$x)
+dat_lenPCA = lm(stdIgf~blu.pca$x, data = matched.new[complete.cases(PCA),])
+summary(dat_lenPCA)
+```
+
+Excluding cloud cover and relief:
+
+```{r}
+pca.lm2 = lm(stdIgf~blu2.pca$x, data = matched.new[complete.cases(mPCA),])
 summary(pca.lm2)
 ```
 
-PC1 and PC5 are the only significant predictors but PC5 only explains 5.5% of the overall variance in the data
+We should definitely include PC1-3 as they are always significant predictors. What do you think about PC5?
 
 ```{r}
 # Plot PC's 1 and 5:
 ggbiplot(blu2.pca, choices = c(1,5), obs.scale = 1, var.scale = 1, groups =Protect, ellipse = TRUE, circle = TRUE)+scale_color_discrete(name = '')+theme_classic()
 ```
 
-Only including PC1 in the final model
+Only including PC1-3+5 in the final model
 
 ```{r}
-res.mod = lm(dat_lenPCA$residuals~Protect+ blu2.pca$x[,1])
+res.mod = lm(stdIgf~blu2.pca$x[,1]+blu2.pca$x[,2]+blu2.pca$x[,3]+blu2.pca$x[,5], data = matched.new[complete.cases(mPCA),])
 summary(res.mod)
+anova(pca.lm2,res.mod)
+eco <- eco[,3:10]
+neco <- cbind(eco[complete.cases(mPCA),],blu2.pca$x)%>%gather('PCnum','PCval',9:15)
+ggplot(data = neco, aes(x=stdigf, y=PCval))+
+  geom_point()+
+  geom_smooth(method = 'lm')+
+  facet_wrap(~PCnum, scales = 'free_y')+
+  theme_classic()
+#Make table of loadings
+knitr::kable(blu2.pca$rotation, caption = 'PCA loadings')
+```
+
+
+```{r, PCR}
+#Run principle componenet regression against igf
+#remove cloud cover and relief from data
+library(pls)
+pcr <- pcr(stdigf~.,data = eco[complete.cases(eco),], scale = TRUE, validation = 'CV')
+validationplot(pcr,  val.type = "R2")
+pls::predplot(pcr, ncomp = 5, line=T)
+```
+
+
+```{r, PCR graph, include=F}
+pcr.df <- data.frame(pcr$scores[,1],pcr$scores[,2]) 
+names(pcr.df) = c('Comp1','Comp2')
+ggplot(data=pcr.df,aes(x=Comp1,y=Comp2)) + 
+  geom_point(aes(fill=Loc),shape=21,size=3)+
+  theme_classic()
+ggplot(data=pcr.df,aes(x=Comp1,y=Comp2)) + 
+  geom_point(aes(fill=Protect),shape=21,size=3)+
+  theme_classic()
+ggplot(data=pcr.df,aes(x=Comp1,y=Comp2)) + 
+  geom_point(aes(fill=cDate),shape=21,size=3)+
+  scale_fill_gradient(low = 'red', high = 'green')+
+  theme_classic()
+
 ```
 
 ```{r}
+#Determining how much time has passed
+#timespan = min(temp.test$cDateTime) %--% max(temp.test$cDateTime)
+#buoy_test <- buoy_summerT[buoy_summerT$datetime %within% timespan,]
+```
+
+```{r, Heat map}
 ##Heat Map
 # myloc = c(lon = -121.0227,lat = 35.5086)
 # slo <- get_map(location = myloc,source = 'google', maptype = 'hybrid')
@@ -779,7 +1069,7 @@ summary(res.mod)
 #   scale_alpha(range = c(0,5), guide = FALSE)
 ```
 
-```{r}
+```{r, PBN Heat map}
 ##Point Buchon
 # #make sure it is plotting igf and not counts
 # pbnloc = c(lon = -120.9,lat = 35.24)
